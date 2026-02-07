@@ -6,7 +6,7 @@ A working webcam (for live translation).
 
 2. Clone the Repository
 Bash
-git clone https://github.com/YOUR_USERNAME/ASL-Multimedia-System.git
+git clone https://github.com/SuyashGupta04/ASL-Multimedia-System/
 cd ASL-Multimedia-System
 3. Create a Virtual Environment (Recommended)
 Windows:
