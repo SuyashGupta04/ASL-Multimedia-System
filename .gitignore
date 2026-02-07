@@ -1,0 +1,14 @@
+# Python junk
+__pycache__/
+*.py[cod]
+venv/
+.env
+
+# Project Temp Folders
+temp_output/
+assets/video_cache/
+
+# IDE settings
+.idea/
+.vscode/
+.DS_Store

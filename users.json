@@ -1,0 +1,12 @@
+{
+    "admin": {
+        "password": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+        "role": "admin",
+        "name": "System Administrator"
+    },
+    "test1": {
+        "password": "3a271ac5fa53219028ba9956f45f8f74fe4fce3a4ac9dec5cad9999f6dac14d0",
+        "role": "user",
+        "name": "void"
+    }
+}
