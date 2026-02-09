@@ -1,0 +1,11 @@
+streamlit
+opencv-python
+mediapipe
+moviepy
+pandas
+numpy
+requests
+beautifulsoup4
+pytesseract
+matplotlib
+Pillow
