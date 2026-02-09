@@ -9,7 +9,7 @@ Bash
 git clone https://github.com/SuyashGupta04/ASL-Multimedia-System/
 cd ASL-Multimedia-System
 3. Create a Virtual Environment (Recommended)
-Windows:
+
 
 Bash
 python -m venv venv
@@ -20,7 +20,6 @@ Bash
 python3 -m venv venv
 source venv/bin/activate
 4. Install Dependencies
-Create a file named requirements.txt and paste the list below, or install manually.
 
 Bash
 pip install streamlit opencv-python mediapipe moviepy requests beautifulsoup4 pandas matplotlib python-pptx numpy
