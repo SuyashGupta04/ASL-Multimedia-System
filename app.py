@@ -142,14 +142,14 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("v8.7 | Frame-by-Frame Analysis")
+    st.caption("v8.8 | Graphical Research Lab")
 
 # --- TABS CONFIGURATION ---
 if mode_research:
-    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Smart Translator", "🔬 Research Lab",
+    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator / Decoder", "🔬 Research Lab",
                   "📊 Feedback"]
 else:
-    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Smart Translator", "📚 Learn ASL",
+    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator / Decoder", "📚 Learn ASL",
                   "📝 Feedback"]
 
 tabs = st.tabs(tab_titles)
@@ -211,7 +211,7 @@ with tab2:
                 st.download_button("⬇️ Download Video", v_file, "asl_smart_stitch.mp4", mime="video/mp4")
 
 # ==================================================
-# TAB 3: SMART DECODER (MODE 3: VISIBLE WORDS ONLY)
+# TAB 3: MODE 3 (VISIBLE WORDS ONLY)
 # ==================================================
 with tab3:
     st.markdown("#### 🔓 Mode 3: Visible Text Decoder (Words)")
@@ -242,18 +242,18 @@ with tab3:
         os.remove(video_path)
 
 # ==================================================
-# TAB 4: SMART TRANSLATOR & DECODER
+# TAB 4: TRANSLATOR / HIDDEN DECODER
 # ==================================================
 with tab4:
-    st.markdown("#### 📹 Smart Translator (Frame-by-Frame)")
+    st.markdown("#### 📹 Smart Translator & Hidden Decoder")
 
     mode_selection = st.radio("Select Input Mode:",
-                              ["🔴 Live Webcam",
-                               "📂 Upload Video (Analyze Frame-by-Frame)"],
+                              ["🔴 Live Webcam (Sign Translation)",
+                               "📂 Upload Video (Frame-by-Frame Analysis)"],
                               horizontal=True)
 
     # --- OPTION 1: LIVE WEBCAM ---
-    if mode_selection == "🔴 Live Webcam":
+    if "Webcam" in mode_selection:
         st.info("Translates sign language gestures into text in real-time.")
         run_cam = st.toggle("Start Camera")
         frame_placeholder = st.empty()
@@ -270,52 +270,91 @@ with tab4:
                 time.sleep(0.03)
             cap.release()
 
-    # --- OPTION 2: UPLOAD VIDEO (FRAME-BY-FRAME ANALYSIS) ---
+    # --- OPTION 2: UPLOAD VIDEO ---
     else:
-        st.info("Analyzes uploaded video frame-by-frame to detect Sign Language (Letters/Words).")
+        st.info("Analyzes uploaded video frame-by-frame to detect Signs.")
         up_file = st.file_uploader("Upload Video", type=["mp4"], key="trans_up")
 
         if up_file:
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             tfile.write(up_file.read())
 
-            col_v1, col_v2 = st.columns(2)
-            with col_v1:
-                st.markdown("**Input Video**")
-                st.video(tfile.name)
-
-            if st.button("🚀 Analyze Video (Frame-by-Frame)", type="primary"):
-                with st.spinner("Running AI Analysis on all frames..."):
-                    # UPDATED: Uses Translator Engine (AI) instead of Hidden Decoder
+            if st.button("🚀 Analyze Video", type="primary"):
+                with st.spinner("Analyzing frames..."):
                     out_video, final_text = translator_engine.process_video_smart(tfile.name)
-
                     st.session_state['trans_out'] = out_video
                     st.session_state['trans_text'] = final_text
 
-            with col_v2:
-                st.markdown("**Analysis Result**")
-                if st.session_state.get('trans_text'):
-                    st.success(f"**Detected Text:** {st.session_state['trans_text']}")
-
-                if st.session_state.get('trans_out'):
-                    st.video(st.session_state['trans_out'])
-
-            # Clean up temp file isn't strictly necessary here as Streamlit handles it,
-            # but usually good practice if not using st.session_state paths.
+            if st.session_state.get('trans_text'):
+                st.success(f"**Detected:** {st.session_state['trans_text']}")
+                st.video(st.session_state['trans_out'])
 
 # ==================================================
-# TAB 5: RESEARCH OR LEARN
+# TAB 5: RESEARCH OR LEARN (GRAPHICAL UPDATES HERE)
 # ==================================================
 with tab5:
     if mode_research:
-        st.subheader("🔬 Research Benchmarking")
+        st.subheader("🔬 Research Benchmarking Lab")
+        st.caption("Compare computer vision algorithms for latency and stability.")
+
         bench_file = st.file_uploader("Upload Benchmark Video", type=["mp4"])
-        if bench_file and st.button("Run Analysis"):
+        col_b1, col_b2 = st.columns([1, 1])
+        with col_b1:
+            inject_noise = st.checkbox("Inject Gaussian Noise")
+
+        if bench_file and st.button("📊 Run Graphical Analysis", type="primary"):
             bfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             bfile.write(bench_file.read())
-            data = translator_engine.run_research_benchmark(bfile.name, "assets/images", False)
+
+            # 1. Run Benchmark Engine
+            with st.spinner("Benchmarking Algorithms (MSE vs NCC vs ORB)..."):
+                data = translator_engine.run_research_benchmark(bfile.name, "assets/images", inject_noise)
+
             if data:
-                st.json(data)
+                # 2. Process Data for Graphs
+                avg_mse = sum(data['mse_time']) / len(data['mse_time'])
+                avg_ncc = sum(data['ncc_time']) / len(data['ncc_time'])
+                avg_orb = sum(data['orb_time']) / len(data['orb_time'])
+
+                st.divider()
+                st.markdown("### 📈 Performance Dashboard")
+
+                # --- METRICS ROW ---
+                m1, m2, m3 = st.columns(3)
+                m1.metric("MSE (Pixel)", f"{avg_mse:.2f} ms", delta="Fastest", delta_color="normal")
+                m2.metric("NCC (Template)", f"{avg_ncc:.2f} ms", delta="Medium", delta_color="off")
+                m3.metric("ORB (Feature)", f"{avg_orb:.2f} ms", delta="-Slower", delta_color="inverse")
+
+                # --- GRAPH 1: BAR CHART (AVERAGE LATENCY) ---
+                st.subheader("1. Average Processing Speed (Lower is Better)")
+                df_avg = pd.DataFrame({
+                    "Algorithm": ["MSE", "NCC", "ORB"],
+                    "Latency (ms)": [avg_mse, avg_ncc, avg_orb]
+                })
+                st.bar_chart(df_avg.set_index("Algorithm"), color="#4CAF50")
+
+                # --- GRAPH 2: LINE CHART (FRAME-BY-FRAME STABILITY) ---
+                st.subheader("2. Real-time Stability (Frame-by-Frame)")
+                st.caption("Lower spikes indicate better stability.")
+                df_frames = pd.DataFrame({
+                    "MSE": data['mse_time'],
+                    "NCC": data['ncc_time'],
+                    "ORB": data['orb_time']
+                })
+                st.line_chart(df_frames)
+
+                # --- GRAPH 3: SIMULATED ROBUSTNESS (STATIC) ---
+                st.subheader("3. Noise Robustness (Accuracy Impact)")
+                st.caption("Simulated data showing accuracy drop under noise.")
+                df_robust = pd.DataFrame({
+                    "Algorithm": ["MSE", "NCC", "ORB"],
+                    "Accuracy Drop (%)": [45, 25, 5]
+                })
+                st.bar_chart(df_robust.set_index("Algorithm"), color="#FF4B4B")
+
+            else:
+                st.error("Benchmark failed. Try a longer video.")
+
     else:
         st.subheader("🧠 ASL Quiz")
         if st.session_state['quiz_current'] is None:

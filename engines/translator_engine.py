@@ -1,214 +1,226 @@
 import cv2
+import mediapipe as mp
 import numpy as np
 import os
-import subprocess
-import mediapipe as mp
+import time
+from scipy.spatial import distance
+from moviepy.editor import VideoFileClip, AudioFileClip
+from gtts import gTTS
 
 
 class TranslatorEngine:
     def __init__(self):
-        # Initialize MediaPipe (For Human Hands)
-        if not hasattr(mp, 'solutions'):
-            raise ImportError("MediaPipe installed but 'solutions' missing.")
+        # Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
-        self.mp_draw = mp.solutions.drawing_utils
         self.hands = self.mp_hands.Hands(
-            static_image_mode=False, max_num_hands=1,
-            min_detection_confidence=0.5, min_tracking_confidence=0.5
+            static_image_mode=False,
+            max_num_hands=1,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5
         )
+        self.mp_draw = mp.solutions.drawing_utils
 
-        # Load Reference Images (For Static Letters)
-        self.refs = self._load_references("assets/images")
+        # Initialize ORB Detector for Feature Matching
+        self.orb = cv2.ORB_create(nfeatures=1000)
 
-    def _load_references(self, asset_dir):
-        """Pre-loads A-Z images for pattern matching."""
-        refs = {}
-        if not os.path.exists(asset_dir): return refs
-
-        for char in "abcdefghijklmnopqrstuvwxyz":
-            for ext in [".png", ".jpg", ".jpeg"]:
-                p = os.path.join(asset_dir, char + ext)
-                if os.path.exists(p):
-                    img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
-                    if img is not None:
-                        refs[char.upper()] = cv2.resize(img, (100, 100))
-                    break
-        return refs
-
-    # --- CORE ALGORITHM ---
-    def analyze_frame(self, frame):
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
-        # 0. CHECK FOR BLACK SPACER
-        avg_brightness = np.mean(gray)
-        if avg_brightness < 40:  # Relaxed threshold
-            return "SPACE", 1.0, "SPACER"
-
-        # 1. PATTERN MATCHING
-        h, w = gray.shape
-        center_crop = gray[int(h * 0.1):int(h * 0.9), int(w * 0.2):int(w * 0.8)]
-        if center_crop.size == 0: center_crop = gray
-
-        target = cv2.resize(center_crop, (100, 100))
-        best_char = "?"
-        max_score = 0.0
-
-        for char, ref in self.refs.items():
-            res = cv2.matchTemplate(target, ref, cv2.TM_CCOEFF_NORMED)
-            score = res[0][0]
-            if score > max_score:
-                max_score = score
-                best_char = char
-
-        if max_score > 0.60:
-            return best_char, max_score, "PATTERN-MATCH"
-
-        # 2. MEDIAPIPE
-        img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(img_rgb)
+    # ==========================================
+    # 1. CORE: FRAME PROCESSING (Live & Video)
+    # ==========================================
+    def process_frame(self, frame):
+        """
+        Analyzes a single frame for Sign Language.
+        Returns: (Annotated Frame, Detected Text)
+        """
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        results = self.hands.process(rgb_frame)
+        height, width, _ = frame.shape
+        detected_char = ""
 
         if results.multi_hand_landmarks:
-            # Simple Geometry Checks
             for hand_landmarks in results.multi_hand_landmarks:
-                lm = hand_landmarks.landmark
-                index_open = lm[8].y < lm[6].y
-                middle_open = lm[12].y < lm[10].y
-                ring_open = lm[16].y < lm[14].y
-                pinky_open = lm[20].y < lm[18].y
+                # Draw Skeleton
+                self.mp_draw.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
 
-                if index_open and not middle_open and not ring_open and not pinky_open:
-                    return "D / 1", 0.8, "AI-SKELETON"
-                elif index_open and middle_open and not ring_open and not pinky_open:
-                    return "V / 2", 0.8, "AI-SKELETON"
-                elif index_open and middle_open and ring_open and not pinky_open:
-                    return "W / 6", 0.8, "AI-SKELETON"
-                elif index_open and middle_open and ring_open and pinky_open:
-                    return "B / 5", 0.8, "AI-SKELETON"
-                elif not index_open and not middle_open and not ring_open and not pinky_open:
-                    return "S / A", 0.8, "AI-SKELETON"
-                elif not index_open and not middle_open and not ring_open and pinky_open:
-                    return "I", 0.8, "AI-SKELETON"
-                elif index_open and not middle_open and not ring_open and pinky_open:
-                    return "Y", 0.8, "AI-SKELETON"
+                # Extract Key Landmarks
+                landmarks = hand_landmarks.landmark
 
-            return "[SIGN]", 0.5, "AI-SKELETON"
+                # Logic: Simple Geometry for Basic Signs (A, B, C, Hello, Thanks)
+                thumb_tip = landmarks[4]
+                index_tip = landmarks[8]
+                middle_tip = landmarks[12]
+                ring_tip = landmarks[16]
+                pinky_tip = landmarks[20]
+                wrist = landmarks[0]
 
-        return "?", 0.0, "NONE"
+                # Calculate distances (Normalized by frame size isn't strictly needed for relative logic,
+                # but good for robust checks. Here we use simple relative positions).
 
-    # --- VIDEO PROCESSOR ---
+                # HELLO (Open Palm, hand up)
+                if (index_tip.y < wrist.y and middle_tip.y < wrist.y and
+                        pinky_tip.y < wrist.y and abs(thumb_tip.x - pinky_tip.x) > 0.1):
+                    detected_char = "HELLO"
+
+                # YES (Fist, bobbing - simplified to fist for static)
+                elif (index_tip.y > landmarks[6].y and middle_tip.y > landmarks[10].y and
+                      pinky_tip.y > landmarks[18].y):
+                    detected_char = "YES"
+
+                # UP / POINTING
+                elif (index_tip.y < middle_tip.y and index_tip.y < ring_tip.y):
+                    detected_char = "UP"
+
+                # PEACE / VICTORY (Index + Middle up)
+                elif (index_tip.y < landmarks[6].y and middle_tip.y < landmarks[10].y and
+                      ring_tip.y > landmarks[14].y):
+                    detected_char = "PEACE"
+
+                # C (Curved hand)
+                elif (distance.euclidean((thumb_tip.x, thumb_tip.y), (index_tip.x, index_tip.y)) < 0.15 and
+                      index_tip.y < wrist.y):
+                    detected_char = "C"
+
+                else:
+                    detected_char = "..."
+
+        return frame, detected_char
+
+    # ==========================================
+    # 2. VIDEO PROCESSING (Smart Mode)
+    # ==========================================
     def process_video_smart(self, video_path):
+        """
+        Reads a video, detects signs frame-by-frame, and generates a summary.
+        """
         cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened(): return None, "Error opening video"
+        if not cap.isOpened():
+            return None, "Error: Cannot open video."
 
+        # Output Video Settings
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Use avc1 for browser playback
         width = int(cap.get(3))
         height = int(cap.get(4))
-        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 24
+        fps = int(cap.get(5))
 
-        out_path = video_path.replace(".mp4", "_analyzed.mp4")
-        out = cv2.VideoWriter(out_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (width, height))
+        # Temp output path
+        temp_out = os.path.join("assets", "temp", "processed_output.mp4")
+        os.makedirs(os.path.dirname(temp_out), exist_ok=True)
 
-        detected_text_blocks = []
+        out = cv2.VideoWriter(temp_out, fourcc, fps, (width, height))
 
-        while cap.isOpened():
+        detected_words = []
+        frame_count = 0
+
+        while True:
             ret, frame = cap.read()
             if not ret: break
 
-            text, conf, method = self.analyze_frame(frame)
+            # Process every 5th frame to speed up (and reduce flicker)
+            if frame_count % 5 == 0:
+                frame, char = self.process_frame(frame)
+                if char and char != "...":
+                    detected_words.append(char)
 
-            # Group consecutive detections
-            if not detected_text_blocks:
-                detected_text_blocks.append({'text': text, 'count': 1})
-            else:
-                last = detected_text_blocks[-1]
-                if last['text'] == text:
-                    last['count'] += 1
-                else:
-                    detected_text_blocks.append({'text': text, 'count': 1})
-
-            # Draw HUD
-            cv2.rectangle(frame, (0, 0), (width, 80), (0, 0, 0), -1)
-            color = (0, 255, 0)
-            if method == "AI-SKELETON": color = (255, 200, 0)
-            if text == "SPACE" or text == "?": color = (100, 100, 100)
-
-            cv2.putText(frame, f"DETECTED: {text}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, color, 3)
-
-            if "AI" in method:
-                img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = self.hands.process(img_rgb)
-                if results.multi_hand_landmarks:
-                    for lm in results.multi_hand_landmarks:
-                        self.mp_draw.draw_landmarks(frame, lm, mp.solutions.hands.HAND_CONNECTIONS)
-
+            # Write annotated frame
             out.write(frame)
+            frame_count += 1
 
         cap.release()
         out.release()
 
-        # --- CONSTRUCT FINAL SENTENCE ---
-        final_sentence = []
+        # Summarize Result (Most frequent word detected)
+        if detected_words:
+            final_text = max(set(detected_words), key=detected_words.count)
+        else:
+            final_text = "No distinct sign detected."
 
-        for block in detected_text_blocks:
-            t = block['text']
-            count = block['count']
+        return temp_out, final_text
 
-            # --- CRITICAL FIX: TREAT '?' AS SPACE ---
-            # If nothing detected or explicit SPACE for > 10 frames (~0.4s) -> INSERT SPACE
-            if (t == "SPACE" or t == "?") and count > 10:
-                if not final_sentence or final_sentence[-1] != " ":
-                    final_sentence.append(" ")
-                continue
+    # ==========================================
+    # 3. RESEARCH LAB BENCHMARK (Fixed)
+    # ==========================================
+    def run_research_benchmark(self, video_path, asset_dir, inject_noise=False):
+        """
+        Benchmarks MSE, NCC, and ORB algorithms.
+        Returns dictionary with timing data.
+        """
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened(): return None
 
-            # Filter short noise for letters
-            if count < 8: continue
-            if t == "?" or t == "SPACE": continue  # Skip short gaps
+        mse_times = []
+        ncc_times = []
+        orb_times = []
 
-            clean_t = t.split(" / ")[0]
+        # Load a dummy reference image for comparison (e.g., Letter 'A')
+        # If no image exists, create a dummy black image
+        ref_path = os.path.join(asset_dir, "a.jpg")
+        if os.path.exists(ref_path):
+            ref_img = cv2.imread(ref_path, 0)  # Grayscale
+        else:
+            ref_img = np.zeros((100, 100), dtype=np.uint8)
 
-            # Calculate duration: 1 sec = 1 char
-            seconds = count / fps
-            repeats = int(round(seconds))
-            if repeats < 1: repeats = 1
+        # Resize ref_img to a standard size for fair comparison
+        ref_img = cv2.resize(ref_img, (200, 200))
 
-            final_sentence.append(clean_t * repeats)
+        frame_count = 0
+        max_frames = 50  # Limit to 50 frames to keep it fast
 
-        final_str = "".join(final_sentence)
-        final_str = " ".join(final_str.split())  # Clean spaces
+        while frame_count < max_frames:
+            ret, frame = cap.read()
+            if not ret: break
 
-        return out_path, final_str
+            # Convert to Grayscale
+            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            gray = cv2.resize(gray, (200, 200))  # Match Ref Size
 
-    # --- LIVE WEBCAM HELPER ---
-    def process_frame(self, frame):
-        text, conf, method = self.analyze_frame(frame)
-        h, w, _ = frame.shape
-        cv2.rectangle(frame, (0, 0), (w, 60), (0, 0, 0), -1)
+            # Inject Noise if requested
+            if inject_noise:
+                noise = np.random.normal(0, 25, gray.shape).astype(np.uint8)
+                gray = cv2.add(gray, noise)
 
-        color = (0, 255, 0)
-        if text == "SPACE": color = (200, 200, 200)
+            # --- 1. MSE (Mean Squared Error) ---
+            start = time.perf_counter()  # High precision timer
+            err = np.sum((gray.astype("float") - ref_img.astype("float")) ** 2)
+            err /= float(gray.shape[0] * gray.shape[1])
+            end = time.perf_counter()
+            mse_times.append((end - start) * 1000)  # Convert to ms
 
-        cv2.putText(frame, f"AI: {text}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1, color, 2)
+            # --- 2. NCC (Normalized Cross-Correlation) ---
+            start = time.perf_counter()
+            res = cv2.matchTemplate(gray, ref_img, cv2.TM_CCOEFF_NORMED)
+            end = time.perf_counter()
+            ncc_times.append((end - start) * 1000)
 
-        if "AI" in method:
-            img_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = self.hands.process(img_rgb)
-            if results.multi_hand_landmarks:
-                for lm in results.multi_hand_landmarks:
-                    self.mp_draw.draw_landmarks(frame, lm, mp.solutions.hands.HAND_CONNECTIONS)
+            # --- 3. ORB (Feature Matching) ---
+            start = time.perf_counter()
+            kp1, des1 = self.orb.detectAndCompute(gray, None)
+            kp2, des2 = self.orb.detectAndCompute(ref_img, None)
+            # Create Matcher (just initialization, but part of the process)
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            if des1 is not None and des2 is not None:
+                matches = bf.match(des1, des2)
+            end = time.perf_counter()
+            orb_times.append((end - start) * 1000)
 
-        return frame, text
+            frame_count += 1
 
-    # --- AUDIO ---
+        cap.release()
+
+        # If video was too short or empty, prevent division by zero
+        if not mse_times: return None
+
+        return {
+            "mse_time": mse_times,
+            "ncc_time": ncc_times,
+            "orb_time": orb_times
+        }
+
+    # ==========================================
+    # 4. AUDIO GENERATION
+    # ==========================================
     def generate_audio(self, text, output_path):
-        if not text or not text.strip(): return None
+        if not text: return
         try:
-            abs_path = os.path.abspath(output_path)
-            if os.path.exists(abs_path): os.remove(abs_path)
-            cmd = ["say", "-o", abs_path, "--data-format=LEI16@44100", text]
-            subprocess.run(cmd, check=True)
-            return abs_path
-        except:
-            return None
-
-    def run_research_benchmark(self, input_path, asset_dir, noise=False):
-        return {"frames": [0], "mse_time": [0], "mse_conf": [0], "ncc_time": [0], "ncc_conf": [0], "orb_time": [0],
-                "orb_conf": [0]}
+            tts = gTTS(text=text, lang='en')
+            tts.save(output_path)
+        except Exception as e:
+            print(f"Audio Error: {e}")
