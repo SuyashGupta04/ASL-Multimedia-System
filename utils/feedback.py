@@ -1,50 +1,36 @@
-import json
+import pandas as pd
 import os
 from datetime import datetime
-import pandas as pd
 
-FEEDBACK_FILE = "feedback.json"
+FEEDBACK_FILE = "assets/feedback_data.csv"
 
 
 def init_feedback_db():
-    """Creates the JSON file if it doesn't exist."""
+    if not os.path.exists("assets"):
+        os.makedirs("assets")
+
     if not os.path.exists(FEEDBACK_FILE):
-        with open(FEEDBACK_FILE, "w") as f:
-            json.dump([], f)
+        df = pd.DataFrame(columns=["timestamp", "user", "rating", "category", "sus_score", "comment"])
+        df.to_csv(FEEDBACK_FILE, index=False)
 
 
-def save_feedback(username, rating, text):
-    """Saves a new feedback entry."""
+def save_feedback(user, rating, category, sus_score, comment):
     init_feedback_db()
+    df = pd.read_csv(FEEDBACK_FILE)
 
-    with open(FEEDBACK_FILE, "r") as f:
-        try:
-            data = json.load(f)
-        except:
-            data = []
+    new_data = pd.DataFrame({
+        "timestamp": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+        "user": [user],
+        "rating": [rating],
+        "category": [category],
+        "sus_score": [sus_score],  # System Usability Score
+        "comment": [comment]
+    })
 
-    entry = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "user": username,
-        "rating": rating,
-        "comment": text
-    }
-    data.append(entry)
-
-    with open(FEEDBACK_FILE, "w") as f:
-        json.dump(data, f, indent=4)
-    return True
+    df = pd.concat([df, new_data], ignore_index=True)
+    df.to_csv(FEEDBACK_FILE, index=False)
 
 
 def get_feedback_df():
-    """Returns feedback as a Pandas DataFrame for the Admin Dashboard."""
     init_feedback_db()
-    try:
-        df = pd.read_json(FEEDBACK_FILE)
-        # If empty, return structured empty df
-        if df.empty:
-            return pd.DataFrame(columns=["timestamp", "user", "rating", "comment"])
-        # Sort by latest first
-        return df.iloc[::-1]
-    except:
-        return pd.DataFrame(columns=["timestamp", "user", "rating", "comment"])
+    return pd.read_csv(FEEDBACK_FILE)

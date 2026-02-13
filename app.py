@@ -67,6 +67,9 @@ DEFAULT_STATE = {
     'user_role': None,
     'user_name': None,
     'quiz_score': 0,
+    'quiz_xp': 0,
+    'quiz_level': 1,
+    'quiz_lives': 3,
     'quiz_streak': 0,
     'quiz_current': None,
     'quiz_options': [],
@@ -146,7 +149,6 @@ with st.sidebar:
         mode_research = True
     else:
         st.success("👤 Standard User Mode")
-        # Stats Display
         c1, c2 = st.columns(2)
         c1.metric("🏆 Score", st.session_state['quiz_score'])
         c2.metric("🔥 Streak", st.session_state['quiz_streak'])
@@ -157,14 +159,14 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("v10.0 | Advanced Edition")
+    st.caption("v11.0 | 2026 Compatible")
 
 # --- TABS CONFIGURATION ---
 if mode_research:
     tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "🔬 Research Lab",
                   "📊 Feedback"]
 else:
-    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "📚 Learn ASL",
+    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "🧠 Gamified Quiz",
                   "📝 Feedback"]
 
 tabs = st.tabs(tab_titles)
@@ -230,8 +232,6 @@ with tab2:
 # ==================================================
 with tab3:
     st.markdown("#### 🔓 Mode 3: Visible Text Decoder (Words)")
-    st.caption("Extracts visible text slides (Mode 2) from the end of the video.")
-
     uploaded_decode = st.file_uploader("Upload Video", type=['mp4', 'avi', 'mov'], key="decoder_words")
 
     if uploaded_decode is not None:
@@ -242,7 +242,6 @@ with tab3:
         if st.button("🔍 Extract Visible Text", type="primary"):
             with st.spinner("Analyzing frames via OCR..."):
                 result = video_decoder.decode_mode2_visible(video_path)
-
                 st.divider()
                 st.subheader("Result")
                 if result and "Error" not in str(result):
@@ -250,9 +249,6 @@ with tab3:
                     st.info(result)
                 else:
                     st.error(result)
-                    if "pytesseract" in str(result):
-                        st.warning("Install Tesseract-OCR to use this feature.")
-
         os.remove(video_path)
 
 # ==================================================
@@ -261,7 +257,6 @@ with tab3:
 with tab4:
     st.markdown("#### 📹 Smart Translator & AI Decoder")
 
-    # 1. Advanced Controls Row
     c_mode, c_detect, c_voice = st.columns([2, 2, 1])
     with c_mode:
         mode_selection = st.radio("Input Source", ["🔴 Live Webcam", "📂 Upload Video"], horizontal=True,
@@ -270,21 +265,17 @@ with tab4:
         detect_mode = st.selectbox("Target", ["Letter (A-Z)", "Word (Common Signs)"], label_visibility="collapsed")
     with c_voice:
         enable_tts = st.toggle("🔊 Voice", value=True)
+        show_trace = st.toggle("✨ Motion", value=True)
 
     # --- WEBCAM LOGIC ---
     if "Webcam" in mode_selection:
         run_cam = st.toggle("Start Camera", key="cam_toggle")
-
-        # Layout: Video on Left, Stats on Right
         col_cam, col_stats = st.columns([2, 1])
-
         with col_cam:
             frame_placeholder = st.empty()
-
         with col_stats:
-            st.markdown("### Detection Status")
+            st.markdown("### Status")
             txt_display = st.empty()
-            st.markdown("**Confidence:**")
             conf_bar = st.progress(0)
             conf_label = st.empty()
             st.info(f"Scanning for: **{detect_mode}**")
@@ -292,32 +283,27 @@ with tab4:
         if run_cam:
             cap = cv2.VideoCapture(0)
             last_spoken = ""
-
             while cap.isOpened() and run_cam:
                 ret, frame = cap.read()
                 if not ret: break
 
-                # Process Frame (Unpacking 3 values now!)
                 engine_mode = "Letter" if "Letter" in detect_mode else "Word"
-                proc_frame, text, confidence = translator_engine.process_frame(frame, detection_mode=engine_mode)
+                # Updated call with draw_trace
+                proc_frame, text, confidence = translator_engine.process_frame(
+                    frame, detection_mode=engine_mode, draw_trace=show_trace
+                )
 
-                # Update Video
                 frame_placeholder.image(proc_frame, channels="BGR")
-
-                # Update Stats
                 conf_bar.progress(confidence)
                 conf_label.caption(f"Certainty: {int(confidence * 100)}%")
 
                 if text:
                     txt_display.markdown(f"# 🟢 {text}")
-
-                    # Logic: Auto-Speak if stable (Conf > 80%) and new word
                     if enable_tts and confidence > 0.8 and text != last_spoken:
                         st.toast(f"🗣️ Speaking: {text}", icon="🔊")
                         last_spoken = text
                 else:
                     txt_display.markdown(f"# 🔴 ...")
-
                 time.sleep(0.03)
             cap.release()
 
@@ -325,157 +311,217 @@ with tab4:
     else:
         st.info(f"Frame-by-frame analysis for **{detect_mode}**.")
         up_file = st.file_uploader("Upload Video", type=["mp4"])
-
         if up_file:
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             tfile.write(up_file.read())
-
             if st.button("🚀 Analyze Video", type="primary"):
                 with st.spinner("Processing..."):
                     out_video, final_text = translator_engine.process_video_smart(tfile.name)
                     st.session_state['trans_out'] = out_video
                     st.session_state['trans_text'] = final_text
-
             if st.session_state.get('trans_text'):
                 st.success(f"**Detected:** {st.session_state['trans_text']}")
                 st.video(st.session_state['trans_out'])
 
 # ==================================================
-# TAB 5: RESEARCH OR LEARN (QUIZ)
+# TAB 5: RESEARCH & LEARNING LAB
 # ==================================================
 with tab5:
+    # --------------------------------------------------
+    # 🔬 OPTION A: RESEARCH MODE (ADMINS ONLY)
+    # --------------------------------------------------
     if mode_research:
-        st.subheader("🔬 Research Benchmarking Lab")
-        st.caption("Compare computer vision algorithms for latency and stability.")
+        st.markdown("## 🧪 Computer Vision Research Laboratory")
+        st.caption("Experiment: Comparative Analysis of Feature Extraction Algorithms for ASL")
 
-        bench_file = st.file_uploader("Upload Benchmark Video", type=["mp4"])
-        col_b1, col_b2 = st.columns([1, 1])
-        with col_b1:
-            inject_noise = st.checkbox("Inject Gaussian Noise")
+        c_setup, c_realtime = st.columns([1, 2])
 
-        if bench_file and st.button("📊 Run Graphical Analysis", type="primary"):
-            bfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            bfile.write(bench_file.read())
+        with c_setup:
+            st.markdown("### 1. Configuration")
+            bench_file = st.file_uploader("📂 Upload Benchmark Dataset (Video)", type=["mp4"])
+            inject_noise = st.checkbox("Simulate Noise (Gaussian $\sigma=25$)")
 
-            with st.spinner("Benchmarking Algorithms (MSE vs NCC vs ORB)..."):
-                data = translator_engine.run_research_benchmark(bfile.name, "assets/images", inject_noise)
+            st.markdown("**Algorithms:**")
+            st.checkbox("MSE (Pixel)", value=True, disabled=True)
+            st.checkbox("NCC (Correlation)", value=True, disabled=True)
+            st.checkbox("ORB (Feature)", value=True, disabled=True)
+            run_exp = st.button("🚀 Run Experiment", type="primary")
 
-            if data:
-                avg_mse = sum(data['mse_time']) / len(data['mse_time'])
-                avg_ncc = sum(data['ncc_time']) / len(data['ncc_time'])
-                avg_orb = sum(data['orb_time']) / len(data['orb_time'])
+        with c_realtime:
+            st.markdown("### 2. Live Analytics")
+            placeholder_chart = st.empty()
+            placeholder_stats = st.empty()
 
-                st.divider()
-                st.markdown("### 📈 Performance Dashboard")
+            if run_exp and bench_file:
+                tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+                tfile.write(bench_file.read())
 
-                m1, m2, m3 = st.columns(3)
-                m1.metric("MSE (Pixel)", f"{avg_mse:.2f} ms", delta="Fastest", delta_color="normal")
-                m2.metric("NCC (Template)", f"{avg_ncc:.2f} ms", delta="Medium", delta_color="off")
-                m3.metric("ORB (Feature)", f"{avg_orb:.2f} ms", delta="-Slower", delta_color="inverse")
+                with st.spinner("🔄 Processing frames..."):
+                    raw_data = translator_engine.run_research_benchmark(
+                        tfile.name, "assets/images", inject_noise
+                    )
 
-                st.subheader("1. Average Processing Speed (Lower is Better)")
-                df_avg = pd.DataFrame({
-                    "Algorithm": ["MSE", "NCC", "ORB"],
-                    "Latency (ms)": [avg_mse, avg_ncc, avg_orb]
-                })
-                st.bar_chart(df_avg.set_index("Algorithm"), color="#4CAF50")
+                if raw_data:
+                    df_res = pd.DataFrame({
+                        "Frame": range(len(raw_data['mse_time'])),
+                        "MSE": raw_data['mse_time'],
+                        "NCC": raw_data['ncc_time'],
+                        "ORB": raw_data['orb_time']
+                    })
+                    # FIX: Replaced use_container_width with width="stretch"
+                    placeholder_chart.line_chart(df_res.set_index("Frame"), width="stretch")
 
-                st.subheader("2. Real-time Stability (Frame-by-Frame)")
-                df_frames = pd.DataFrame({
-                    "MSE": data['mse_time'],
-                    "NCC": data['ncc_time'],
-                    "ORB": data['orb_time']
-                })
-                st.line_chart(df_frames)
-            else:
-                st.error("Benchmark failed. Try a longer video.")
+                    avg_mse = df_res["MSE"].mean()
+                    avg_ncc = df_res["NCC"].mean()
+                    avg_orb = df_res["ORB"].mean()
+                    fps_orb = 1000 / avg_orb if avg_orb > 0 else 0
 
+                    placeholder_stats.markdown(f"""
+                    | Algorithm | Avg Latency | FPS | Real-Time? |
+                    | :--- | :--- | :--- | :--- |
+                    | MSE | `{avg_mse:.2f} ms` | `{1000 / avg_mse:.0f}` | {'✅' if avg_mse < 33 else '❌'} |
+                    | NCC | `{avg_ncc:.2f} ms` | `{1000 / avg_ncc:.0f}` | {'✅' if avg_ncc < 33 else '❌'} |
+                    | ORB | `{avg_orb:.2f} ms` | `{fps_orb:.0f}` | {'✅' if avg_orb < 33 else '❌'} |
+                    """)
+
+                    st.download_button("📥 Download Logs", df_res.to_csv(index=False).encode('utf-8'), "data.csv",
+                                       "text/csv")
+                else:
+                    st.error("Experiment Failed.")
+            elif run_exp:
+                st.warning("Upload a video first.")
+
+    # --------------------------------------------------
+    # 🎮 OPTION B: GAMIFIED QUIZ (USERS)
+    # --------------------------------------------------
     else:
-        # --- QUIZ SECTION ---
-        st.subheader("🧠 Interactive ASL Quiz")
-        st.caption("Test your knowledge of the alphabet!")
+        c_lvl, c_xp, c_life = st.columns([1, 3, 1])
+        with c_lvl:
+            st.metric("Level", f"{st.session_state['quiz_level']}")
+        with c_xp:
+            xp_needed = st.session_state['quiz_level'] * 100
+            cur_xp = st.session_state['quiz_xp']
+            progress = min(1.0, cur_xp / xp_needed) if xp_needed > 0 else 0
+            st.write(f"**XP: {cur_xp} / {xp_needed}**")
+            st.progress(progress)
+        with c_life:
+            st.markdown(f"### {'❤️' * st.session_state['quiz_lives']}")
+            if st.session_state['quiz_lives'] == 0:
+                st.error("GAME OVER!")
+                if st.button("🔄 Restart"):
+                    st.session_state.update({'quiz_lives': 3, 'quiz_score': 0, 'quiz_xp': 0, 'quiz_level': 1})
+                    st.rerun()
+                st.stop()
 
-        # Initialize Question
+        st.divider()
+        quiz_mode = st.radio("Mode:", ["🅰️ Multiple Choice", "📹 Mimic Master"], horizontal=True)
+
+        # Question Gen
         if st.session_state['quiz_current'] is None:
-            char = random.choice("abcdefghijklmnopqrstuvwxyz")
-            st.session_state['quiz_current'] = char
-            opts = [char]
+            max_idx = min(25, st.session_state['quiz_level'] * 5)
+            target = random.choice("abcdefghijklmnopqrstuvwxyz"[:max_idx])
+            st.session_state['quiz_current'] = target
+            opts = [target]
             while len(opts) < 4:
-                c = random.choice("abcdefghijklmnopqrstuvwxyz")
+                c = random.choice("abcdefghijklmnopqrstuvwxyz"[:max_idx])
                 if c not in opts: opts.append(c)
             random.shuffle(opts)
             st.session_state['quiz_options'] = opts
 
         target = st.session_state['quiz_current']
-        options = st.session_state['quiz_options']
-        path = video_engine.get_image_path(target)
+        col_q, col_a = st.columns([1, 1])
 
-        # Layout: Card Style
-        with st.container():
-            st.markdown('<div class="quiz-card">', unsafe_allow_html=True)
-            col_q_img, col_q_opts = st.columns([1, 1])
+        with col_q:
+            st.info(f"Question: What is this?")
+            path = video_engine.get_image_path(target)
+            if os.path.exists(path): st.image(path, width=300)
 
-            with col_q_img:
-                if path:
-                    st.image(path, width=250)
-                else:
-                    st.error("Image not found")
-
-            with col_q_opts:
-                st.markdown("### What letter is this?")
-
-
-                # Callback to handle button clicks
-                def check_answer(selected):
-                    if selected.lower() == target:
-                        # Correct
-                        st.session_state['quiz_score'] += 10
+        with col_a:
+            if "Multiple" in quiz_mode:
+                def check_mcq(sel):
+                    if sel == target:
+                        st.session_state['quiz_xp'] += 10
                         st.session_state['quiz_streak'] += 1
-                        st.toast(f"✅ Correct! Streak: {st.session_state['quiz_streak']}", icon="🔥")
+                        st.toast("✅ Correct!", icon="🔥")
+                        if st.session_state['quiz_xp'] >= st.session_state['quiz_level'] * 100:
+                            st.session_state['quiz_level'] += 1
+                            st.balloons()
                     else:
-                        # Wrong
-                        st.session_state['quiz_score'] = max(0, st.session_state['quiz_score'] - 5)
-                        st.session_state['quiz_streak'] = 0
-                        st.toast(f"❌ Wrong! It was '{target.upper()}'", icon="😢")
-
-                    # Reset for next question
+                        st.session_state['quiz_lives'] -= 1
+                        st.toast("❌ Wrong!", icon="💔")
                     st.session_state['quiz_current'] = None
                     time.sleep(0.5)
 
 
-                # Display Options
-                c1, c2 = st.columns(2)
-                c3, c4 = st.columns(2)
+                ops = st.session_state['quiz_options']
+                b1, b2 = st.columns(2)
+                b3, b4 = st.columns(2)
+                # FIX: Replaced use_container_width with width="stretch"
+                if b1.button(ops[0].upper(), width="stretch"): check_mcq(ops[0]); st.rerun()
+                if b2.button(ops[1].upper(), width="stretch"): check_mcq(ops[1]); st.rerun()
+                if b3.button(ops[2].upper(), width="stretch"): check_mcq(ops[2]); st.rerun()
+                if b4.button(ops[3].upper(), width="stretch"): check_mcq(ops[3]); st.rerun()
 
-                if c1.button(options[0].upper(), key="opt1", use_container_width=True): check_answer(
-                    options[0]); st.rerun()
-                if c2.button(options[1].upper(), key="opt2", use_container_width=True): check_answer(
-                    options[1]); st.rerun()
-                if c3.button(options[2].upper(), key="opt3", use_container_width=True): check_answer(
-                    options[2]); st.rerun()
-                if c4.button(options[3].upper(), key="opt4", use_container_width=True): check_answer(
-                    options[3]); st.rerun()
+            else:
+                st.markdown(f"### Show: **{target.upper()}**")
+                run_mimic = st.toggle("Start Cam")
+                cam_ph = st.empty()
+                if run_mimic:
+                    cap = cv2.VideoCapture(0)
+                    cnt = 0
+                    while cap.isOpened() and run_mimic:
+                        ret, frame = cap.read()
+                        if not ret: break
+                        frame, det, _ = translator_engine.process_frame(frame, "Letter", draw_trace=False)
+                        cam_ph.image(frame, channels="BGR")
+                        if det and det.lower() == target.lower():
+                            cnt += 1
+                            if cnt > 10:
+                                st.session_state['quiz_xp'] += 20
+                                st.balloons()
+                                if st.session_state['quiz_xp'] >= st.session_state['quiz_level'] * 100:
+                                    st.session_state['quiz_level'] += 1
+                                st.session_state['quiz_current'] = None
+                                cap.release();
+                                time.sleep(1);
+                                st.rerun()
+                        else:
+                            cnt = 0
+                        time.sleep(0.03)
+                    cap.release()
 
-                st.divider()
-                if st.button("Skip Question ⏭️", type="secondary"):
-                    st.session_state['quiz_current'] = None
-                    st.rerun()
-
-            st.markdown('</div>', unsafe_allow_html=True)
+        st.divider()
+        if st.button("⏭️ Skip (-5 XP)"):
+            st.session_state['quiz_xp'] = max(0, st.session_state['quiz_xp'] - 5)
+            st.session_state['quiz_current'] = None
+            st.rerun()
 
 # ==================================================
 # TAB 6: FEEDBACK
 # ==================================================
 with tab6:
+    st.markdown("### 📊 UX Lab")
     if mode_research:
         df = get_feedback_df()
         if not df.empty:
-            st.dataframe(df, use_container_width=True)
-            st.bar_chart(df['rating'].value_counts())
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Responses", len(df))
+            k2.metric("Avg Rating", f"{df['rating'].mean():.1f}")
+            k3.metric("Avg SUS", f"{df['sus_score'].mean():.1f}")
+            # FIX: Replaced use_container_width with width="stretch"
+            st.dataframe(df, width="stretch")
+            st.download_button("📥 Download CSV", df.to_csv(index=False).encode('utf-8'), "ux_data.csv")
     else:
-        with st.form("feed_form", clear_on_submit=True):
-            r = st.slider("Rating", 1, 5, 5)
-            c = st.text_area("Comments")
+        with st.form("research_survey"):
+            c1, c2 = st.columns(2)
+            with c1:
+                r = st.slider("Rating", 1, 5, 5)
+                cat = st.selectbox("Category", ["Accuracy", "Speed", "UI", "Other"])
+            with c2:
+                q1 = st.slider("Easy to use?", 1, 5, 4)
+                q2 = st.slider("Confident?", 1, 5, 4)
+            cm = st.text_area("Comments")
+            sus = ((q1 - 1) + (q2 - 1)) * 12.5
             if st.form_submit_button("Submit"):
-                save_feedback(st.session_state['user_name'], r, c)
-                st.toast("Feedback Saved!")
+                save_feedback(st.session_state['user_name'], r, cat, sus, cm)
+                st.success("Feedback Saved!")
