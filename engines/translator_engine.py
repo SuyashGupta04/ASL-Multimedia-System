@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 import os
 import time
+import math
 from scipy.spatial import distance
 from moviepy.editor import VideoFileClip, AudioFileClip
 from gtts import gTTS
@@ -15,96 +16,171 @@ class TranslatorEngine:
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
-            min_detection_confidence=0.5,
+            min_detection_confidence=0.7,
             min_tracking_confidence=0.5
         )
         self.mp_draw = mp.solutions.drawing_utils
 
-        # Initialize ORB Detector for Feature Matching
+        # Initialize ORB Detector for Feature Matching (Research Lab)
         self.orb = cv2.ORB_create(nfeatures=1000)
 
+        # History for smoothing predictions and calculating confidence
+        self.history = []
+        self.history_len = 12
+
     # ==========================================
-    # 1. CORE: FRAME PROCESSING (Live & Video)
+    # HELPER: FINGER STATUS
     # ==========================================
-    def process_frame(self, frame):
+    def get_finger_status(self, lm):
         """
-        Analyzes a single frame for Sign Language.
-        Returns: (Annotated Frame, Detected Text)
+        Returns a list of 5 booleans [Thumb, Index, Middle, Ring, Pinky]
+        True = Open/Extended, False = Closed/Bent
+        """
+        fingers = []
+        # Thumb (Check x-axis for right hand assumption, logic flips for left)
+        if lm[4].x > lm[3].x:
+            fingers.append(True)
+        else:
+            fingers.append(False)
+
+        # Other 4 fingers (Check Y-axis: Tip above PIP joint)
+        fingers.append(lm[8].y < lm[6].y)  # Index
+        fingers.append(lm[12].y < lm[10].y)  # Middle
+        fingers.append(lm[16].y < lm[14].y)  # Ring
+        fingers.append(lm[20].y < lm[18].y)  # Pinky
+        return fingers
+
+    # ==========================================
+    # LOGIC: ALPHABETS (A-Z)
+    # ==========================================
+    def detect_character(self, fingers, lm):
+        if fingers == [True, False, False, False, False]: return "A"
+        if fingers == [False, True, True, True, True]: return "B"
+
+        # C: Curved hand
+        dist_c = math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y)
+        if 0.03 < dist_c < 0.15 and fingers[1] and fingers[2]: return "C"
+
+        if fingers == [False, True, False, False, False]: return "D"
+        if fingers == [False, False, False, False, False]: return "E"
+
+        # F: Index + Thumb touching
+        dist_f = math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y)
+        if dist_f < 0.05 and fingers[2] and fingers[3] and fingers[4]: return "F"
+
+        if fingers == [False, False, False, False, True]: return "I"
+        if fingers == [True, True, False, False, False]: return "L"
+
+        # O: Tips touching thumb
+        dist_o = math.hypot(lm[12].x - lm[4].x, lm[12].y - lm[4].y)
+        if dist_o < 0.05 and not fingers[1]: return "O"
+
+        if fingers == [False, True, True, False, False]: return "V"
+        if fingers == [False, True, True, True, False]: return "W"
+        if fingers == [True, False, False, False, True]: return "Y"
+
+        return ""
+
+    # ==========================================
+    # LOGIC: WHOLE WORDS
+    # ==========================================
+    def detect_word(self, fingers, lm):
+        if all(fingers) and lm[0].y < 0.4: return "HELLO"
+        if fingers == [True, True, False, False, True]: return "I LOVE YOU"
+        if fingers == [False, False, False, False, False]: return "YES"
+        if fingers == [False, True, True, False, False]: return "PEACE"
+
+        dist_f = math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y)
+        if dist_f < 0.05 and fingers[2] and fingers[3]: return "OKAY"
+
+        dist_no = math.hypot(lm[12].x - lm[4].x, lm[12].y - lm[4].y)
+        if dist_no < 0.05 and fingers[1] == False: return "NO"
+
+        if fingers == [False, True, False, False, False]: return "UP"
+
+        return ""
+
+    # ==========================================
+    # 1. CORE: FRAME PROCESSING (Advanced)
+    # ==========================================
+    def process_frame(self, frame, detection_mode="Letter"):
+        """
+        Analyzes a single frame.
+        Returns: (Annotated Frame, Detected Text, Confidence Score)
         """
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.hands.process(rgb_frame)
-        height, width, _ = frame.shape
-        detected_char = ""
+
+        detected_text = ""
+        confidence = 0.0
+
+        # Default Visuals: Red (Searching)
+        conn_color = (0, 0, 255)
+        lm_color = (0, 0, 255)
 
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                # Draw Skeleton
-                self.mp_draw.draw_landmarks(frame, hand_landmarks, self.mp_hands.HAND_CONNECTIONS)
+                lm = hand_landmarks.landmark
+                fingers_state = self.get_finger_status(lm)
 
-                # Extract Key Landmarks
-                landmarks = hand_landmarks.landmark
-
-                # Logic: Simple Geometry for Basic Signs (A, B, C, Hello, Thanks)
-                thumb_tip = landmarks[4]
-                index_tip = landmarks[8]
-                middle_tip = landmarks[12]
-                ring_tip = landmarks[16]
-                pinky_tip = landmarks[20]
-                wrist = landmarks[0]
-
-                # Calculate distances (Normalized by frame size isn't strictly needed for relative logic,
-                # but good for robust checks. Here we use simple relative positions).
-
-                # HELLO (Open Palm, hand up)
-                if (index_tip.y < wrist.y and middle_tip.y < wrist.y and
-                        pinky_tip.y < wrist.y and abs(thumb_tip.x - pinky_tip.x) > 0.1):
-                    detected_char = "HELLO"
-
-                # YES (Fist, bobbing - simplified to fist for static)
-                elif (index_tip.y > landmarks[6].y and middle_tip.y > landmarks[10].y and
-                      pinky_tip.y > landmarks[18].y):
-                    detected_char = "YES"
-
-                # UP / POINTING
-                elif (index_tip.y < middle_tip.y and index_tip.y < ring_tip.y):
-                    detected_char = "UP"
-
-                # PEACE / VICTORY (Index + Middle up)
-                elif (index_tip.y < landmarks[6].y and middle_tip.y < landmarks[10].y and
-                      ring_tip.y > landmarks[14].y):
-                    detected_char = "PEACE"
-
-                # C (Curved hand)
-                elif (distance.euclidean((thumb_tip.x, thumb_tip.y), (index_tip.x, index_tip.y)) < 0.15 and
-                      index_tip.y < wrist.y):
-                    detected_char = "C"
-
+                # Route Logic
+                if detection_mode == "Letter":
+                    raw_text = self.detect_character(fingers_state, lm)
                 else:
-                    detected_char = "..."
+                    raw_text = self.detect_word(fingers_state, lm)
 
-        return frame, detected_char
+                # Stabilizer & Confidence Calculation
+                if raw_text:
+                    self.history.append(raw_text)
+                else:
+                    self.history.append("...")  # Append silence
+
+                if len(self.history) > self.history_len:
+                    self.history.pop(0)
+
+                # Determine Result based on History
+                if self.history:
+                    candidate = max(set(self.history), key=self.history.count)
+                    count = self.history.count(candidate)
+
+                    # Confidence = Percentage of frames matching the candidate
+                    confidence = count / self.history_len
+
+                    # Threshold: Return text only if confidence > 60%
+                    if confidence > 0.6 and candidate != "...":
+                        detected_text = candidate
+                        # Success Visuals: Green (Found)
+                        conn_color = (0, 255, 0)
+                        lm_color = (0, 255, 0)
+
+                # Draw Skeleton with Dynamic Colors
+                self.mp_draw.draw_landmarks(
+                    frame,
+                    hand_landmarks,
+                    self.mp_hands.HAND_CONNECTIONS,
+                    self.mp_draw.DrawingSpec(color=lm_color, thickness=2, circle_radius=4),
+                    self.mp_draw.DrawingSpec(color=conn_color, thickness=2, circle_radius=2)
+                )
+
+        return frame, detected_text, confidence
 
     # ==========================================
     # 2. VIDEO PROCESSING (Smart Mode)
     # ==========================================
     def process_video_smart(self, video_path):
         """
-        Reads a video, detects signs frame-by-frame, and generates a summary.
+        Reads a video, detects signs frame-by-frame.
         """
         cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened():
-            return None, "Error: Cannot open video."
+        if not cap.isOpened(): return None, "Error"
 
-        # Output Video Settings
-        fourcc = cv2.VideoWriter_fourcc(*'avc1')  # Use avc1 for browser playback
+        fourcc = cv2.VideoWriter_fourcc(*'avc1')
         width = int(cap.get(3))
         height = int(cap.get(4))
         fps = int(cap.get(5))
 
-        # Temp output path
         temp_out = os.path.join("assets", "temp", "processed_output.mp4")
         os.makedirs(os.path.dirname(temp_out), exist_ok=True)
-
         out = cv2.VideoWriter(temp_out, fourcc, fps, (width, height))
 
         detected_words = []
@@ -114,20 +190,17 @@ class TranslatorEngine:
             ret, frame = cap.read()
             if not ret: break
 
-            # Process every 5th frame to speed up (and reduce flicker)
             if frame_count % 5 == 0:
-                frame, char = self.process_frame(frame)
-                if char and char != "...":
-                    detected_words.append(char)
+                # Unpack all 3 values (frame, text, confidence)
+                frame, char, conf = self.process_frame(frame, detection_mode="Letter")
+                if char: detected_words.append(char)
 
-            # Write annotated frame
             out.write(frame)
             frame_count += 1
 
         cap.release()
         out.release()
 
-        # Summarize Result (Most frequent word detected)
         if detected_words:
             final_text = max(set(detected_words), key=detected_words.count)
         else:
@@ -136,13 +209,9 @@ class TranslatorEngine:
         return temp_out, final_text
 
     # ==========================================
-    # 3. RESEARCH LAB BENCHMARK (Fixed)
+    # 3. RESEARCH LAB BENCHMARK
     # ==========================================
     def run_research_benchmark(self, video_path, asset_dir, inject_noise=False):
-        """
-        Benchmarks MSE, NCC, and ORB algorithms.
-        Returns dictionary with timing data.
-        """
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened(): return None
 
@@ -150,51 +219,45 @@ class TranslatorEngine:
         ncc_times = []
         orb_times = []
 
-        # Load a dummy reference image for comparison (e.g., Letter 'A')
-        # If no image exists, create a dummy black image
+        # Load Dummy Reference
         ref_path = os.path.join(asset_dir, "a.jpg")
         if os.path.exists(ref_path):
-            ref_img = cv2.imread(ref_path, 0)  # Grayscale
+            ref_img = cv2.imread(ref_path, 0)
         else:
             ref_img = np.zeros((100, 100), dtype=np.uint8)
-
-        # Resize ref_img to a standard size for fair comparison
         ref_img = cv2.resize(ref_img, (200, 200))
 
         frame_count = 0
-        max_frames = 50  # Limit to 50 frames to keep it fast
+        max_frames = 50
 
         while frame_count < max_frames:
             ret, frame = cap.read()
             if not ret: break
 
-            # Convert to Grayscale
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.resize(gray, (200, 200))  # Match Ref Size
+            gray = cv2.resize(gray, (200, 200))
 
-            # Inject Noise if requested
             if inject_noise:
                 noise = np.random.normal(0, 25, gray.shape).astype(np.uint8)
                 gray = cv2.add(gray, noise)
 
-            # --- 1. MSE (Mean Squared Error) ---
-            start = time.perf_counter()  # High precision timer
+            # 1. MSE
+            start = time.perf_counter()
             err = np.sum((gray.astype("float") - ref_img.astype("float")) ** 2)
             err /= float(gray.shape[0] * gray.shape[1])
             end = time.perf_counter()
-            mse_times.append((end - start) * 1000)  # Convert to ms
+            mse_times.append((end - start) * 1000)
 
-            # --- 2. NCC (Normalized Cross-Correlation) ---
+            # 2. NCC
             start = time.perf_counter()
             res = cv2.matchTemplate(gray, ref_img, cv2.TM_CCOEFF_NORMED)
             end = time.perf_counter()
             ncc_times.append((end - start) * 1000)
 
-            # --- 3. ORB (Feature Matching) ---
+            # 3. ORB
             start = time.perf_counter()
             kp1, des1 = self.orb.detectAndCompute(gray, None)
             kp2, des2 = self.orb.detectAndCompute(ref_img, None)
-            # Create Matcher (just initialization, but part of the process)
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             if des1 is not None and des2 is not None:
                 matches = bf.match(des1, des2)
@@ -204,8 +267,6 @@ class TranslatorEngine:
             frame_count += 1
 
         cap.release()
-
-        # If video was too short or empty, prevent division by zero
         if not mse_times: return None
 
         return {

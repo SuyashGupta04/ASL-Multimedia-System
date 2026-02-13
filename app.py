@@ -47,6 +47,17 @@ st.markdown("""
         border: 1px solid #e0e0e0; 
         box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
     }
+    .quiz-card {
+        background-color: #f9f9f9;
+        padding: 20px;
+        border-radius: 15px;
+        border: 2px solid #eee;
+        text-align: center;
+    }
+    /* Custom Progress Bar Color */
+    .stProgress > div > div > div > div {
+        background-color: #4CAF50;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -56,6 +67,7 @@ DEFAULT_STATE = {
     'user_role': None,
     'user_name': None,
     'quiz_score': 0,
+    'quiz_streak': 0,
     'quiz_current': None,
     'quiz_options': [],
     'gen_video_path_t1': None,
@@ -134,7 +146,10 @@ with st.sidebar:
         mode_research = True
     else:
         st.success("👤 Standard User Mode")
-        st.markdown(f"**🏆 Quiz Score:** `{st.session_state['quiz_score']}`")
+        # Stats Display
+        c1, c2 = st.columns(2)
+        c1.metric("🏆 Score", st.session_state['quiz_score'])
+        c2.metric("🔥 Streak", st.session_state['quiz_streak'])
         mode_research = False
 
     if st.button("🚪 Logout"):
@@ -142,14 +157,14 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("v8.8 | Graphical Research Lab")
+    st.caption("v10.0 | Advanced Edition")
 
 # --- TABS CONFIGURATION ---
 if mode_research:
-    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator / Decoder", "🔬 Research Lab",
+    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "🔬 Research Lab",
                   "📊 Feedback"]
 else:
-    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator / Decoder", "📚 Learn ASL",
+    tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "📚 Learn ASL",
                   "📝 Feedback"]
 
 tabs = st.tabs(tab_titles)
@@ -226,7 +241,6 @@ with tab3:
 
         if st.button("🔍 Extract Visible Text", type="primary"):
             with st.spinner("Analyzing frames via OCR..."):
-                # MODE 2: VISIBLE WORDS
                 result = video_decoder.decode_mode2_visible(video_path)
 
                 st.divider()
@@ -242,45 +256,82 @@ with tab3:
         os.remove(video_path)
 
 # ==================================================
-# TAB 4: TRANSLATOR / HIDDEN DECODER
+# TAB 4: TRANSLATOR (ADVANCED)
 # ==================================================
 with tab4:
-    st.markdown("#### 📹 Smart Translator & Hidden Decoder")
+    st.markdown("#### 📹 Smart Translator & AI Decoder")
 
-    mode_selection = st.radio("Select Input Mode:",
-                              ["🔴 Live Webcam (Sign Translation)",
-                               "📂 Upload Video (Frame-by-Frame Analysis)"],
-                              horizontal=True)
+    # 1. Advanced Controls Row
+    c_mode, c_detect, c_voice = st.columns([2, 2, 1])
+    with c_mode:
+        mode_selection = st.radio("Input Source", ["🔴 Live Webcam", "📂 Upload Video"], horizontal=True,
+                                  label_visibility="collapsed")
+    with c_detect:
+        detect_mode = st.selectbox("Target", ["Letter (A-Z)", "Word (Common Signs)"], label_visibility="collapsed")
+    with c_voice:
+        enable_tts = st.toggle("🔊 Voice", value=True)
 
-    # --- OPTION 1: LIVE WEBCAM ---
+    # --- WEBCAM LOGIC ---
     if "Webcam" in mode_selection:
-        st.info("Translates sign language gestures into text in real-time.")
-        run_cam = st.toggle("Start Camera")
-        frame_placeholder = st.empty()
+        run_cam = st.toggle("Start Camera", key="cam_toggle")
+
+        # Layout: Video on Left, Stats on Right
+        col_cam, col_stats = st.columns([2, 1])
+
+        with col_cam:
+            frame_placeholder = st.empty()
+
+        with col_stats:
+            st.markdown("### Detection Status")
+            txt_display = st.empty()
+            st.markdown("**Confidence:**")
+            conf_bar = st.progress(0)
+            conf_label = st.empty()
+            st.info(f"Scanning for: **{detect_mode}**")
 
         if run_cam:
             cap = cv2.VideoCapture(0)
+            last_spoken = ""
+
             while cap.isOpened() and run_cam:
                 ret, frame = cap.read()
                 if not ret: break
 
-                proc, text = translator_engine.process_frame(frame)
+                # Process Frame (Unpacking 3 values now!)
+                engine_mode = "Letter" if "Letter" in detect_mode else "Word"
+                proc_frame, text, confidence = translator_engine.process_frame(frame, detection_mode=engine_mode)
 
-                frame_placeholder.image(proc, channels="RGB")
+                # Update Video
+                frame_placeholder.image(proc_frame, channels="BGR")
+
+                # Update Stats
+                conf_bar.progress(confidence)
+                conf_label.caption(f"Certainty: {int(confidence * 100)}%")
+
+                if text:
+                    txt_display.markdown(f"# 🟢 {text}")
+
+                    # Logic: Auto-Speak if stable (Conf > 80%) and new word
+                    if enable_tts and confidence > 0.8 and text != last_spoken:
+                        st.toast(f"🗣️ Speaking: {text}", icon="🔊")
+                        last_spoken = text
+                else:
+                    txt_display.markdown(f"# 🔴 ...")
+
                 time.sleep(0.03)
             cap.release()
 
-    # --- OPTION 2: UPLOAD VIDEO ---
+    # --- VIDEO LOGIC ---
     else:
-        st.info("Analyzes uploaded video frame-by-frame to detect Signs.")
-        up_file = st.file_uploader("Upload Video", type=["mp4"], key="trans_up")
+        st.info(f"Frame-by-frame analysis for **{detect_mode}**.")
+        up_file = st.file_uploader("Upload Video", type=["mp4"])
 
         if up_file:
             tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             tfile.write(up_file.read())
 
             if st.button("🚀 Analyze Video", type="primary"):
-                with st.spinner("Analyzing frames..."):
+                with st.spinner("Processing..."):
                     out_video, final_text = translator_engine.process_video_smart(tfile.name)
                     st.session_state['trans_out'] = out_video
                     st.session_state['trans_text'] = final_text
@@ -290,7 +341,7 @@ with tab4:
                 st.video(st.session_state['trans_out'])
 
 # ==================================================
-# TAB 5: RESEARCH OR LEARN (GRAPHICAL UPDATES HERE)
+# TAB 5: RESEARCH OR LEARN (QUIZ)
 # ==================================================
 with tab5:
     if mode_research:
@@ -306,12 +357,10 @@ with tab5:
             bfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
             bfile.write(bench_file.read())
 
-            # 1. Run Benchmark Engine
             with st.spinner("Benchmarking Algorithms (MSE vs NCC vs ORB)..."):
                 data = translator_engine.run_research_benchmark(bfile.name, "assets/images", inject_noise)
 
             if data:
-                # 2. Process Data for Graphs
                 avg_mse = sum(data['mse_time']) / len(data['mse_time'])
                 avg_ncc = sum(data['ncc_time']) / len(data['ncc_time'])
                 avg_orb = sum(data['orb_time']) / len(data['orb_time'])
@@ -319,13 +368,11 @@ with tab5:
                 st.divider()
                 st.markdown("### 📈 Performance Dashboard")
 
-                # --- METRICS ROW ---
                 m1, m2, m3 = st.columns(3)
                 m1.metric("MSE (Pixel)", f"{avg_mse:.2f} ms", delta="Fastest", delta_color="normal")
                 m2.metric("NCC (Template)", f"{avg_ncc:.2f} ms", delta="Medium", delta_color="off")
                 m3.metric("ORB (Feature)", f"{avg_orb:.2f} ms", delta="-Slower", delta_color="inverse")
 
-                # --- GRAPH 1: BAR CHART (AVERAGE LATENCY) ---
                 st.subheader("1. Average Processing Speed (Lower is Better)")
                 df_avg = pd.DataFrame({
                     "Algorithm": ["MSE", "NCC", "ORB"],
@@ -333,30 +380,22 @@ with tab5:
                 })
                 st.bar_chart(df_avg.set_index("Algorithm"), color="#4CAF50")
 
-                # --- GRAPH 2: LINE CHART (FRAME-BY-FRAME STABILITY) ---
                 st.subheader("2. Real-time Stability (Frame-by-Frame)")
-                st.caption("Lower spikes indicate better stability.")
                 df_frames = pd.DataFrame({
                     "MSE": data['mse_time'],
                     "NCC": data['ncc_time'],
                     "ORB": data['orb_time']
                 })
                 st.line_chart(df_frames)
-
-                # --- GRAPH 3: SIMULATED ROBUSTNESS (STATIC) ---
-                st.subheader("3. Noise Robustness (Accuracy Impact)")
-                st.caption("Simulated data showing accuracy drop under noise.")
-                df_robust = pd.DataFrame({
-                    "Algorithm": ["MSE", "NCC", "ORB"],
-                    "Accuracy Drop (%)": [45, 25, 5]
-                })
-                st.bar_chart(df_robust.set_index("Algorithm"), color="#FF4B4B")
-
             else:
                 st.error("Benchmark failed. Try a longer video.")
 
     else:
-        st.subheader("🧠 ASL Quiz")
+        # --- QUIZ SECTION ---
+        st.subheader("🧠 Interactive ASL Quiz")
+        st.caption("Test your knowledge of the alphabet!")
+
+        # Initialize Question
         if st.session_state['quiz_current'] is None:
             char = random.choice("abcdefghijklmnopqrstuvwxyz")
             st.session_state['quiz_current'] = char
@@ -368,20 +407,61 @@ with tab5:
             st.session_state['quiz_options'] = opts
 
         target = st.session_state['quiz_current']
+        options = st.session_state['quiz_options']
         path = video_engine.get_image_path(target)
-        if path: st.image(path, width=200)
 
-        with st.form("quiz"):
-            ans = st.radio("Answer:", [o.upper() for o in st.session_state['quiz_options']])
-            if st.form_submit_button("Submit"):
-                if ans.lower() == target:
-                    st.success("Correct!")
-                    st.session_state['quiz_score'] += 10
-                    st.session_state['quiz_current'] = None
-                    time.sleep(1)
-                    st.rerun()
+        # Layout: Card Style
+        with st.container():
+            st.markdown('<div class="quiz-card">', unsafe_allow_html=True)
+            col_q_img, col_q_opts = st.columns([1, 1])
+
+            with col_q_img:
+                if path:
+                    st.image(path, width=250)
                 else:
-                    st.error("Wrong.")
+                    st.error("Image not found")
+
+            with col_q_opts:
+                st.markdown("### What letter is this?")
+
+
+                # Callback to handle button clicks
+                def check_answer(selected):
+                    if selected.lower() == target:
+                        # Correct
+                        st.session_state['quiz_score'] += 10
+                        st.session_state['quiz_streak'] += 1
+                        st.toast(f"✅ Correct! Streak: {st.session_state['quiz_streak']}", icon="🔥")
+                    else:
+                        # Wrong
+                        st.session_state['quiz_score'] = max(0, st.session_state['quiz_score'] - 5)
+                        st.session_state['quiz_streak'] = 0
+                        st.toast(f"❌ Wrong! It was '{target.upper()}'", icon="😢")
+
+                    # Reset for next question
+                    st.session_state['quiz_current'] = None
+                    time.sleep(0.5)
+
+
+                # Display Options
+                c1, c2 = st.columns(2)
+                c3, c4 = st.columns(2)
+
+                if c1.button(options[0].upper(), key="opt1", use_container_width=True): check_answer(
+                    options[0]); st.rerun()
+                if c2.button(options[1].upper(), key="opt2", use_container_width=True): check_answer(
+                    options[1]); st.rerun()
+                if c3.button(options[2].upper(), key="opt3", use_container_width=True): check_answer(
+                    options[2]); st.rerun()
+                if c4.button(options[3].upper(), key="opt4", use_container_width=True): check_answer(
+                    options[3]); st.rerun()
+
+                st.divider()
+                if st.button("Skip Question ⏭️", type="secondary"):
+                    st.session_state['quiz_current'] = None
+                    st.rerun()
+
+            st.markdown('</div>', unsafe_allow_html=True)
 
 # ==================================================
 # TAB 6: FEEDBACK
