@@ -159,7 +159,7 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("v11.0 | 2026 Compatible")
+    st.caption("v13.0 | Speed Control & MP4 Support")
 
 # --- TABS CONFIGURATION ---
 if mode_research:
@@ -180,12 +180,22 @@ with tab1:
     with col_input:
         st.subheader("1. Input")
         text_input_a = st.text_input("Enter text:", placeholder="HELLO", key="input_a")
+
+        # SPEED SLIDER (New Feature)
+        speed_val = st.slider("Playback Speed", min_value=0.5, max_value=3.0, value=1.0, step=0.5,
+                              help="Increase to shorten video length")
+
         if st.button("🎬 Generate Video", type="primary", key="btn_anim_a"):
             if text_input_a:
                 with st.status("🎬 Rendering Animation...", expanded=True) as status:
                     os.makedirs("temp_output", exist_ok=True)
-                    path = "temp_output/anim_a.mp4"
-                    res = video_engine.generate_sequence(text_input_a, path, force_spelling=True)
+                    # FIX: Use dynamic filename to avoid cache errors
+                    ts = int(time.time())
+                    path = f"temp_output/anim_a_{ts}.mp4"
+
+                    # Passing Speed Parameter
+                    res = video_engine.generate_sequence(text_input_a, path, force_spelling=True, speed=speed_val)
+
                     if res:
                         status.update(label="✅ Video Ready!", state="complete", expanded=False)
                         st.session_state['gen_video_path_t1'] = res
@@ -195,10 +205,13 @@ with tab1:
 
     with col_preview:
         st.subheader("2. Result")
+        # Check existence before loading
         if st.session_state['gen_video_path_t1'] and os.path.exists(st.session_state['gen_video_path_t1']):
             st.video(st.session_state['gen_video_path_t1'])
             with open(st.session_state['gen_video_path_t1'], "rb") as v_file:
                 st.download_button("⬇️ Download Video", v_file, "asl_fingerspelling.mp4", mime="video/mp4")
+        elif st.session_state['gen_video_path_t1']:
+            st.warning("⚠️ Video file expired. Please regenerate.")
 
 # ==================================================
 # TAB 2: SMART STITCHER
@@ -212,7 +225,9 @@ with tab2:
             if text_input_b:
                 with st.status("🏗️ Building Video Sequence...", expanded=True) as status:
                     os.makedirs("temp_output", exist_ok=True)
-                    path = "temp_output/smart_stitch.mp4"
+                    ts = int(time.time())
+                    path = f"temp_output/smart_stitch_{ts}.mp4"
+
                     res = video_engine.generate_sequence(text_input_b, path, force_spelling=False)
                     if res:
                         status.update(label="✅ Video Ready!", state="complete", expanded=False)
@@ -288,7 +303,6 @@ with tab4:
                 if not ret: break
 
                 engine_mode = "Letter" if "Letter" in detect_mode else "Word"
-                # Updated call with draw_trace
                 proc_frame, text, confidence = translator_engine.process_frame(
                     frame, detection_mode=engine_mode, draw_trace=show_trace
                 )
@@ -368,7 +382,7 @@ with tab5:
                         "NCC": raw_data['ncc_time'],
                         "ORB": raw_data['orb_time']
                     })
-                    # FIX: Replaced use_container_width with width="stretch"
+
                     placeholder_chart.line_chart(df_res.set_index("Frame"), width="stretch")
 
                     avg_mse = df_res["MSE"].mean()
@@ -433,8 +447,16 @@ with tab5:
 
         with col_q:
             st.info(f"Question: What is this?")
-            path = video_engine.get_image_path(target)
-            if os.path.exists(path): st.image(path, width=300)
+            # --- NEW ASSET LOGIC: Check Video vs Image ---
+            path = video_engine.get_sign_asset(target)
+
+            if path and os.path.exists(path):
+                if path.endswith(".mp4"):
+                    st.video(path, format="video/mp4", autoplay=True, muted=True, loop=True)
+                else:
+                    st.image(path, width=300)
+            else:
+                st.warning(f"Missing asset for '{target.upper()}'")
 
         with col_a:
             if "Multiple" in quiz_mode:
@@ -456,7 +478,7 @@ with tab5:
                 ops = st.session_state['quiz_options']
                 b1, b2 = st.columns(2)
                 b3, b4 = st.columns(2)
-                # FIX: Replaced use_container_width with width="stretch"
+
                 if b1.button(ops[0].upper(), width="stretch"): check_mcq(ops[0]); st.rerun()
                 if b2.button(ops[1].upper(), width="stretch"): check_mcq(ops[1]); st.rerun()
                 if b3.button(ops[2].upper(), width="stretch"): check_mcq(ops[2]); st.rerun()
@@ -508,7 +530,6 @@ with tab6:
             k1.metric("Responses", len(df))
             k2.metric("Avg Rating", f"{df['rating'].mean():.1f}")
             k3.metric("Avg SUS", f"{df['sus_score'].mean():.1f}")
-            # FIX: Replaced use_container_width with width="stretch"
             st.dataframe(df, width="stretch")
             st.download_button("📥 Download CSV", df.to_csv(index=False).encode('utf-8'), "ux_data.csv")
     else:
