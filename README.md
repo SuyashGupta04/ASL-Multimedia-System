@@ -1,77 +1,204 @@
-🛠️ Installation & Setup
-Follow these steps to set up the ASL Multimedia System on your local machine.
 
-1. Prerequisites
- Python 3.9+ (Tested on 3.9 and 3.10)
+# 🤟 ASL Multimedia System  
+**Multimodal American Sign Language Translation & Learning Platform**
 
- Webcam (For Translator & Quiz modes)
+An interactive multimedia system for **bidirectional American Sign Language (ASL) translation and learning**, featuring text-to-video generation, video-to-text recognition, webcam-based detection, OCR fallback, and gamified quiz modes — all delivered through a Streamlit web interface.
 
- Tesseract OCR (Required for Mode 3 & Translator Fallback)
+---
 
-2. Clone the Repository
- Bash
- git clone https://github.com/SuyashGupta04/ASL-Multimedida-System.git
- 
- cd ASL-Multimedida-System
-3. Install Python Dependencies
- We use streamlit, opencv, mediapipe, and moviepy for the core engine.
+## 🚀 Features
 
- Bash
- pip install -r requirements.txt
- Note for Mac/Linux Users: If you encounter errors with opencv, 
- try: 
- pip install opencv-python-headless
+- 🔤 Text → Sign Video (Character-by-Character)
+- 🧩 Text → Sign Video (Word-by-Word with Character Fallback)
+- 🎥 Video → Text Recognition
+- 📷 Webcam-based Sign Detection
+- 🔎 OCR-based Text Extraction from Video (Tesseract)
+- 🌐 Automatic Sign Video Fetching (Web Scraper fallback)
+- 🧠 Quiz & Learning Modes
+- 👤 Role-based Modes
+- ⚡ Real-time Processing with MediaPipe & OpenCV
+- 🎬 MP4-based realistic sign rendering
 
-4. Install Tesseract OCR (Critical)
- This project uses Tesseract for reading text from videos (Mode 3).
+---
 
- Windows:
+## 🏗️ Tech Stack
 
- Download the installer from UB-Mannheim/tesseract.
+| Layer | Technology |
+|--------|-------------|
+Frontend UI | Streamlit |
+Computer Vision | OpenCV, MediaPipe |
+Video Processing | MoviePy |
+OCR | Tesseract OCR + pytesseract |
+Data Handling | NumPy, Pandas, SciPy |
+Audio | gTTS |
+Web Scraping | Requests, BeautifulSoup |
+Language | Python 3.9+ |
 
- Install it to C:\Program Files\Tesseract-OCR.
+---
 
- Add this path to your System Environment Variables if needed.
+## 📂 Project Structure
 
- macOS (Homebrew):
+ASL-Multimedia-System/
+│
+├── app.py
+├── requirements.txt
+│
+├── assets/
+│   ├── images/
+│   ├── temp/
+│   └── video_cache/
+│
+├── modules/
+├── utils/
+└── README.md
 
- Bash
- brew install tesseract
- Linux (Ubuntu/Debian):
+---
 
- Bash
- sudo apt-get update
- sudo apt-get install tesseract-ocr
+# 🛠️ Installation & Setup
 
-5. Asset Setup (Video Library)
- This system uses MP4 video assets for realistic sign language generation.
+## ✅ Prerequisites
 
- Create the folder structure:
+- Python 3.9+
+- Webcam (for Translator & Quiz modes)
+- Tesseract OCR
 
- /assets
-     /images      <-- Place your .mp4 files here (a.mp4, b.mp4...)
-     /temp        <-- Auto-generated
-     /video_cache <-- Auto-generated
- Note: If you don't have local assets, the system's Web Scraper will automatically download missing signs from SignASL.org during generation.
+---
 
- 6. Run the Application
- Launch the web interface using Streamlit:
+## 📥 Clone Repository
 
- Bash
- streamlit run app.py
- 
- 📦 requirements.txt
- Create a file named requirements.txt with the following content:
+```bash
+git clone https://github.com/SuyashGupta04/ASL-Multimedida-System.git
+cd ASL-Multimedida-System
+```
 
- streamlit
- opencv-python
- mediapipe
- moviepy==1.0.3
- numpy
- pandas
- scipy
- gtts
- requests
- beautifulsoup4
- pytesseract
- watchdog
+---
+
+## 📦 Install Dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+macOS/Linux OpenCV fix if needed:
+
+```bash
+pip install opencv-python-headless
+```
+
+---
+
+## 🔍 Install Tesseract OCR
+
+### Windows
+Install to:
+C:\Program Files\Tesseract-OCR  
+Add to PATH.
+
+### macOS
+```bash
+brew install tesseract
+```
+
+### Linux
+```bash
+sudo apt-get update
+sudo apt-get install tesseract-ocr
+```
+
+---
+
+## 🎞️ Asset Setup
+
+Create:
+
+assets/images/
+assets/temp/
+assets/video_cache/
+
+Place sign videos (.mp4) inside assets/images/
+
+Missing signs are auto-downloaded by the built-in scraper.
+
+---
+
+## ▶️ Run Application
+
+```bash
+streamlit run app.py
+```
+
+---
+
+## 🎮 System Modes
+
+Mode 1 — Character-based Text → Video  
+Mode 2 — Word-based Text → Video with fallback  
+Mode 3 — Video → Text  
+Mode 4 — Webcam Detection  
+Mode 5 — Learning Mode  
+Mode 6 — Quiz Mode  
+
+---
+
+## 📄 requirements.txt
+
+```txt
+streamlit
+opencv-python
+mediapipe
+moviepy==1.0.3
+numpy
+pandas
+scipy
+gtts
+requests
+beautifulsoup4
+pytesseract
+watchdog
+```
+
+---
+
+## ⚡ Performance Notes
+
+- First run may be slower due to downloads and caching
+- Cached videos stored in video_cache/
+- Good lighting improves detection accuracy
+
+---
+
+## 🔐 Limitations
+
+- Accuracy depends on lighting and camera quality
+- Word-level signs limited by dataset
+- OCR depends on video clarity
+
+---
+
+## 🤝 Contributing
+
+Fork → Branch → Commit → Push → Pull Request
+
+Include test results and screenshots when applicable.
+
+---
+
+## 📌 Roadmap
+
+- Deep learning sign classifier
+- Multi-language support
+- Mobile deployment
+- Custom dataset training
+
+---
+
+## 📜 License
+
+Add your preferred license (MIT recommended).
+
+---
+
+## 👨‍💻 Author
+
+Suyash Gupta  
+ASL Multimedia System Project
