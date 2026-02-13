@@ -11,6 +11,7 @@ Follow these steps to set up the ASL Multimedia System on your local machine.
 2. Clone the Repository
  Bash
  git clone https://github.com/SuyashGupta04/ASL-Multimedida-System.git
+ 
  cd ASL-Multimedida-System
 3. Install Python Dependencies
  We use streamlit, opencv, mediapipe, and moviepy for the core engine.
@@ -58,6 +59,7 @@ Follow these steps to set up the ASL Multimedia System on your local machine.
 
  Bash
  streamlit run app.py
+ 
  📦 requirements.txt
  Create a file named requirements.txt with the following content:
 
