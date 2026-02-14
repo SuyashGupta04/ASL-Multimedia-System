@@ -10,9 +10,16 @@ from collections import deque
 from moviepy.editor import VideoFileClip, AudioFileClip
 from gtts import gTTS
 
+# NEW: Import OCR library
+try:
+    import pytesseract
+except ImportError:
+    pytesseract = None
+
 
 class TranslatorEngine:
     def __init__(self):
+        # 1. Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -21,6 +28,7 @@ class TranslatorEngine:
             min_tracking_confidence=0.5
         )
 
+        # 2. Initialize Face Mesh
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -32,12 +40,15 @@ class TranslatorEngine:
         self.mp_draw = mp.solutions.drawing_utils
         self.orb = cv2.ORB_create(nfeatures=1000)
 
+        # 3. State Management
         self.history = []
         self.history_len = 12
 
+        # 4. Trajectory Buffers
         self.trajectory_wrist = deque(maxlen=20)
         self.trajectory_index = deque(maxlen=20)
 
+        # 5. Load AI Model
         self.model = None
         self.model_path = "model.p"
         self.labels_dict = {0: 'A', 1: 'B', 2: 'C'}
@@ -50,10 +61,13 @@ class TranslatorEngine:
             except:
                 pass
 
+    # ... [Keep helper functions: draw_trajectory, detect_expression, get_finger_status, predict_with_ai] ...
+    # (For brevity, I'm skipping the repetitive helper functions from previous steps.
+    #  Ensure you keep them or copy the full block below.)
+
     def draw_trajectory(self, frame, trajectory, color):
         for i in range(1, len(trajectory)):
-            if trajectory[i - 1] is None or trajectory[i] is None:
-                continue
+            if trajectory[i - 1] is None or trajectory[i] is None: continue
             thickness = int(np.sqrt(20 / float(len(trajectory) - i + 1)) * 2)
             cv2.line(frame, trajectory[i - 1], trajectory[i], color, thickness)
         return frame
@@ -63,9 +77,7 @@ class TranslatorEngine:
         right_eye = face_landmarks.landmark[159].y
         left_brow = face_landmarks.landmark[334].y
         left_eye = face_landmarks.landmark[386].y
-
-        if (abs(right_brow - right_eye) + abs(left_brow - left_eye)) / 2 > 0.055:
-            return "QUESTION"
+        if (abs(right_brow - right_eye) + abs(left_brow - left_eye)) / 2 > 0.055: return "QUESTION"
         return "NEUTRAL"
 
     def get_finger_status(self, lm):
@@ -94,6 +106,7 @@ class TranslatorEngine:
         except:
             return None
 
+    # ... [Keep Geometric Rules: detect_character_geometric, detect_word_geometric] ...
     def detect_character_geometric(self, fingers, lm):
         if fingers == [True, False, False, False, False] and lm[4].y < lm[3].y: return "A"
         if fingers == [False, True, True, True, True]: return "B"
@@ -123,6 +136,7 @@ class TranslatorEngine:
         if fingers == [False, True, False, False, False]: return "UP"
         return ""
 
+    # ... [Keep process_frame] ...
     def process_frame(self, frame, detection_mode="Letter", draw_trace=False):
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results_hand = self.hands.process(rgb_frame)
@@ -196,58 +210,113 @@ class TranslatorEngine:
 
         return frame, detected_text, confidence
 
+    # ==========================================
+    # UPDATED VIDEO PROCESSING WITH OCR FALLBACK
+    # ==========================================
     def process_video_smart(self, video_path):
+        """
+        1. Tries to detect Hand Signs frame-by-frame.
+        2. If result is weak, scans the LAST 2 seconds for OCR text.
+        """
         cap = cv2.VideoCapture(video_path)
-        if not cap.isOpened(): return None, "Error"
+        if not cap.isOpened(): return None, "Error: Cannot open video"
+
+        # Settings
         fourcc = cv2.VideoWriter_fourcc(*'avc1')
-        width, height = int(cap.get(3)), int(cap.get(4))
-        out = cv2.VideoWriter("assets/temp/processed_output.mp4", fourcc, int(cap.get(5)), (width, height))
+        width = int(cap.get(3))
+        height = int(cap.get(4))
+        fps = int(cap.get(5))
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+        temp_out = os.path.join("assets", "temp", "processed_output.mp4")
+        os.makedirs(os.path.dirname(temp_out), exist_ok=True)
+        out = cv2.VideoWriter(temp_out, fourcc, fps, (width, height))
+
+        # Sign Language Variables
         detected_sequence = []
-        current_stable = ""
-        stable_count = 0
+        current_stable_char = ""
+        frame_stability_counter = 0
+        STABILITY_THRESHOLD = 5
 
+        # OCR Variables
+        scan_for_ocr = True
+        ocr_result = ""
+
+        frame_idx = 0
         while True:
             ret, frame = cap.read()
             if not ret: break
-            frame, char, _ = self.process_frame(frame, "Letter", draw_trace=False)
-            if char:
-                if char == current_stable:
-                    stable_count += 1
-                else:
-                    current_stable = char; stable_count = 0
-                if stable_count == 5:
-                    if not detected_sequence or char != detected_sequence[-1]:
-                        detected_sequence.append(char)
-            out.write(frame)
-        cap.release();
-        out.release()
-        return "assets/temp/processed_output.mp4", " ".join(detected_sequence) if detected_sequence else "No signs."
 
-    # ==========================================
-    # FIXED BENCHMARK FUNCTION
-    # ==========================================
+            # 1. Process Hands
+            if frame_idx % 2 == 0:  # Optimize speed
+                frame, char, conf = self.process_frame(frame, detection_mode="Letter", draw_trace=False)
+
+                if char:
+                    # Logic to build sentence
+                    if char == current_stable_char:
+                        frame_stability_counter += 1
+                    else:
+                        current_stable_char = char
+                        frame_stability_counter = 0
+
+                    if frame_stability_counter == STABILITY_THRESHOLD:
+                        if not detected_sequence or char != detected_sequence[-1]:
+                            detected_sequence.append(char)
+
+            # 2. Process OCR (Only on the last 45 frames / 1.5 seconds)
+            if scan_for_ocr and pytesseract and (total_frames - frame_idx < 45):
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                # Threshold to isolate white text on black background
+                _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+                try:
+                    text = pytesseract.image_to_string(thresh).strip()
+                    # Basic filter to ensure it's a valid word/sentence
+                    if len(text) > 1 and len(text) > len(ocr_result):
+                        ocr_result = text
+                except:
+                    pass
+
+            out.write(frame)
+            frame_idx += 1
+
+        cap.release()
+        out.release()
+
+        # 3. Decision Logic: Combine Hand Signs + OCR
+        final_text = ""
+
+        # Format Hand Signs
+        if detected_sequence:
+            final_text = " ".join(detected_sequence)
+
+        # If Hand Signs are weak or empty, fallback to OCR
+        if ocr_result:
+            if not final_text:
+                final_text = f"OCR: {ocr_result}"
+            else:
+                # Optionally show both if they differ
+                final_text += f" (Text Slide: {ocr_result})"
+
+        if not final_text:
+            final_text = "No signs or text detected."
+
+        return temp_out, final_text
+
+    # ... [Keep run_research_benchmark, generate_audio] ...
     def run_research_benchmark(self, video_path, asset_dir, inject_noise=False):
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened(): return None
         mse, ncc, orb = [], [], []
-
-        # --- FIXED LOAD LOGIC ---
-        ref_path = os.path.join(asset_dir, "a.jpg")
-        ref = cv2.imread(ref_path, 0)
-
-        if ref is None:  # Explicit check
-            ref = np.zeros((200, 200), np.uint8)
-
+        ref = cv2.imread(os.path.join(asset_dir, "a.jpg"), 0)
+        if ref is None: ref = np.zeros((200, 200), np.uint8)
         ref = cv2.resize(ref, (200, 200))
-        # ------------------------
 
         for _ in range(50):
             ret, frame = cap.read()
             if not ret: break
             gray = cv2.resize(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (200, 200))
             if inject_noise: gray = cv2.add(gray, np.random.normal(0, 25, gray.shape).astype(np.uint8))
-
             s = time.perf_counter();
             np.sum((gray.astype("float") - ref.astype("float")) ** 2);
             mse.append((time.perf_counter() - s) * 1000)
