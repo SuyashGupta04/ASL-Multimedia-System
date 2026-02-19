@@ -5,6 +5,7 @@ import pandas as pd
 import time
 import cv2
 import random
+import string
 from datetime import datetime
 
 # --- LOAD ENGINES & UTILS ---
@@ -54,12 +55,19 @@ st.markdown("""
         border: 2px solid #eee;
         text-align: center;
     }
-    /* Custom Progress Bar Color */
     .stProgress > div > div > div > div {
         background-color: #4CAF50;
     }
 </style>
 """, unsafe_allow_html=True)
+
+# --- VOCABULARY LIST ---
+# You can expand this list with any common ASL words available on SignASL.org
+COMMON_WORDS = [
+    "HELLO", "PLEASE", "SORRY", "YES", "NO", "THANK",
+    "HELP", "WATER", "MORE", "DONE", "EAT", "LOVE",
+    "HAPPY", "SAD", "WORK", "FAMILY", "FRIEND", "SCHOOL"
+]
 
 # --- SESSION STATE ---
 DEFAULT_STATE = {
@@ -73,6 +81,9 @@ DEFAULT_STATE = {
     'quiz_streak': 0,
     'quiz_current': None,
     'quiz_options': [],
+    'recent_quiz_chars': [],
+    'recent_quiz_words': [],
+    'last_quiz_type': "🔤 Letters",
     'gen_video_path_t1': None,
     'gen_video_path_t2': None,
     'trans_out': None,
@@ -84,6 +95,36 @@ DEFAULT_STATE = {
 for key, value in DEFAULT_STATE.items():
     if key not in st.session_state:
         st.session_state[key] = value
+
+
+# --- HIGH RANDOMNESS QUIZ HELPERS ---
+def get_new_quiz_char(current_level):
+    max_idx = min(26, current_level * 5)
+    all_chars = list(string.ascii_uppercase[:max_idx])
+    available_chars = [c for c in all_chars if c not in st.session_state['recent_quiz_chars']]
+    if not available_chars:
+        st.session_state['recent_quiz_chars'] = []
+        available_chars = all_chars
+
+    new_char = random.choice(available_chars)
+    st.session_state['recent_quiz_chars'].append(new_char)
+    max_buffer = max(2, len(all_chars) - 2)
+    if len(st.session_state['recent_quiz_chars']) > max_buffer:
+        st.session_state['recent_quiz_chars'].pop(0)
+    return new_char
+
+
+def get_new_quiz_word():
+    available_words = [w for w in COMMON_WORDS if w not in st.session_state['recent_quiz_words']]
+    if not available_words:
+        st.session_state['recent_quiz_words'] = []
+        available_words = COMMON_WORDS
+
+    new_word = random.choice(available_words)
+    st.session_state['recent_quiz_words'].append(new_word)
+    if len(st.session_state['recent_quiz_words']) > 5:
+        st.session_state['recent_quiz_words'].pop(0)
+    return new_word
 
 
 # --- LOAD ENGINES ---
@@ -159,9 +200,8 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
-    st.caption("v13.0 | Speed Control & MP4 Support")
+    st.caption("v15.0 | Dynamic Word Quiz via SignASL")
 
-# --- TABS CONFIGURATION ---
 if mode_research:
     tab_titles = ["🔤 Text-to-Sign", "🎬 Smart Stitcher", "🔓 Mode 3: Words", "📹 Translator (Adv)", "🔬 Research Lab",
                   "📊 Feedback"]
@@ -180,22 +220,14 @@ with tab1:
     with col_input:
         st.subheader("1. Input")
         text_input_a = st.text_input("Enter text:", placeholder="HELLO", key="input_a")
-
-        # SPEED SLIDER (New Feature)
-        speed_val = st.slider("Playback Speed", min_value=0.5, max_value=3.0, value=1.0, step=0.5,
-                              help="Increase to shorten video length")
+        speed_val = st.slider("Playback Speed", min_value=0.5, max_value=3.0, value=1.0, step=0.5)
 
         if st.button("🎬 Generate Video", type="primary", key="btn_anim_a"):
             if text_input_a:
                 with st.status("🎬 Rendering Animation...", expanded=True) as status:
                     os.makedirs("temp_output", exist_ok=True)
-                    # FIX: Use dynamic filename to avoid cache errors
-                    ts = int(time.time())
-                    path = f"temp_output/anim_a_{ts}.mp4"
-
-                    # Passing Speed Parameter
+                    path = f"temp_output/anim_a_{int(time.time())}.mp4"
                     res = video_engine.generate_sequence(text_input_a, path, force_spelling=True, speed=speed_val)
-
                     if res:
                         status.update(label="✅ Video Ready!", state="complete", expanded=False)
                         st.session_state['gen_video_path_t1'] = res
@@ -205,13 +237,10 @@ with tab1:
 
     with col_preview:
         st.subheader("2. Result")
-        # Check existence before loading
         if st.session_state['gen_video_path_t1'] and os.path.exists(st.session_state['gen_video_path_t1']):
             st.video(st.session_state['gen_video_path_t1'])
             with open(st.session_state['gen_video_path_t1'], "rb") as v_file:
                 st.download_button("⬇️ Download Video", v_file, "asl_fingerspelling.mp4", mime="video/mp4")
-        elif st.session_state['gen_video_path_t1']:
-            st.warning("⚠️ Video file expired. Please regenerate.")
 
 # ==================================================
 # TAB 2: SMART STITCHER
@@ -221,14 +250,14 @@ with tab2:
     col_st_in, col_st_out = st.columns([1, 2])
     with col_st_in:
         text_input_b = st.text_input("Enter sentence:", placeholder="HOW ARE YOU", key="input_b")
+        speed_val_b = st.slider("Playback Speed", min_value=0.5, max_value=3.0, value=1.0, step=0.5, key="speed_b")
+
         if st.button("🎬 Generate Smart Video", type="primary", key="btn_stitch"):
             if text_input_b:
                 with st.status("🏗️ Building Video Sequence...", expanded=True) as status:
                     os.makedirs("temp_output", exist_ok=True)
-                    ts = int(time.time())
-                    path = f"temp_output/smart_stitch_{ts}.mp4"
-
-                    res = video_engine.generate_sequence(text_input_b, path, force_spelling=False)
+                    path = f"temp_output/smart_stitch_{int(time.time())}.mp4"
+                    res = video_engine.generate_sequence(text_input_b, path, force_spelling=False, speed=speed_val_b)
                     if res:
                         status.update(label="✅ Video Ready!", state="complete", expanded=False)
                         st.session_state['gen_video_path_t2'] = res
@@ -282,7 +311,6 @@ with tab4:
         enable_tts = st.toggle("🔊 Voice", value=True)
         show_trace = st.toggle("✨ Motion", value=True)
 
-    # --- WEBCAM LOGIC ---
     if "Webcam" in mode_selection:
         run_cam = st.toggle("Start Camera", key="cam_toggle")
         col_cam, col_stats = st.columns([2, 1])
@@ -308,7 +336,7 @@ with tab4:
                 )
 
                 frame_placeholder.image(proc_frame, channels="BGR")
-                conf_bar.progress(confidence)
+                conf_bar.progress(float(confidence))
                 conf_label.caption(f"Certainty: {int(confidence * 100)}%")
 
                 if text:
@@ -320,8 +348,6 @@ with tab4:
                     txt_display.markdown(f"# 🔴 ...")
                 time.sleep(0.03)
             cap.release()
-
-    # --- VIDEO LOGIC ---
     else:
         st.info(f"Frame-by-frame analysis for **{detect_mode}**.")
         up_file = st.file_uploader("Upload Video", type=["mp4"])
@@ -341,103 +367,73 @@ with tab4:
 # TAB 5: RESEARCH & LEARNING LAB
 # ==================================================
 with tab5:
-    # --------------------------------------------------
-    # 🔬 OPTION A: RESEARCH MODE (ADMINS ONLY)
-    # --------------------------------------------------
     if mode_research:
+        # --- ADMIN RESEARCH LAB --- (UNCHANGED)
         st.markdown("## 🧪 Computer Vision Research Laboratory")
         st.caption("Experiment: Comparative Analysis of Feature Extraction Algorithms for ASL")
-
         c_setup, c_realtime = st.columns([1, 2])
-
         with c_setup:
-            st.markdown("### 1. Configuration")
             bench_file = st.file_uploader("📂 Upload Benchmark Dataset (Video)", type=["mp4"])
             inject_noise = st.checkbox("Simulate Noise (Gaussian $\sigma=25$)")
-
-            st.markdown("**Algorithms:**")
-            st.checkbox("MSE (Pixel)", value=True, disabled=True)
-            st.checkbox("NCC (Correlation)", value=True, disabled=True)
-            st.checkbox("ORB (Feature)", value=True, disabled=True)
             run_exp = st.button("🚀 Run Experiment", type="primary")
-
         with c_realtime:
-            st.markdown("### 2. Live Analytics")
-            placeholder_chart = st.empty()
-            placeholder_stats = st.empty()
-
             if run_exp and bench_file:
                 tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
                 tfile.write(bench_file.read())
-
                 with st.spinner("🔄 Processing frames..."):
-                    raw_data = translator_engine.run_research_benchmark(
-                        tfile.name, "assets/images", inject_noise
-                    )
-
+                    raw_data = translator_engine.run_research_benchmark(tfile.name, "assets/images", inject_noise)
                 if raw_data:
-                    df_res = pd.DataFrame({
-                        "Frame": range(len(raw_data['mse_time'])),
-                        "MSE": raw_data['mse_time'],
-                        "NCC": raw_data['ncc_time'],
-                        "ORB": raw_data['orb_time']
-                    })
-
-                    placeholder_chart.line_chart(df_res.set_index("Frame"), width="stretch")
-
-                    avg_mse = df_res["MSE"].mean()
-                    avg_ncc = df_res["NCC"].mean()
-                    avg_orb = df_res["ORB"].mean()
-                    fps_orb = 1000 / avg_orb if avg_orb > 0 else 0
-
-                    placeholder_stats.markdown(f"""
-                    | Algorithm | Avg Latency | FPS | Real-Time? |
-                    | :--- | :--- | :--- | :--- |
-                    | MSE | `{avg_mse:.2f} ms` | `{1000 / avg_mse:.0f}` | {'✅' if avg_mse < 33 else '❌'} |
-                    | NCC | `{avg_ncc:.2f} ms` | `{1000 / avg_ncc:.0f}` | {'✅' if avg_ncc < 33 else '❌'} |
-                    | ORB | `{avg_orb:.2f} ms` | `{fps_orb:.0f}` | {'✅' if avg_orb < 33 else '❌'} |
-                    """)
-
-                    st.download_button("📥 Download Logs", df_res.to_csv(index=False).encode('utf-8'), "data.csv",
-                                       "text/csv")
-                else:
-                    st.error("Experiment Failed.")
-            elif run_exp:
-                st.warning("Upload a video first.")
-
-    # --------------------------------------------------
-    # 🎮 OPTION B: GAMIFIED QUIZ (USERS)
-    # --------------------------------------------------
+                    df_res = pd.DataFrame({"Frame": range(len(raw_data['mse_time'])), "MSE": raw_data['mse_time'],
+                                           "NCC": raw_data['ncc_time'], "ORB": raw_data['orb_time']})
+                    st.line_chart(df_res.set_index("Frame"), width="stretch")
     else:
+        # --- GAMIFIED QUIZ (DYNAMIC LETTERS + SIGNASL WORDS) ---
         c_lvl, c_xp, c_life = st.columns([1, 3, 1])
         with c_lvl:
             st.metric("Level", f"{st.session_state['quiz_level']}")
         with c_xp:
             xp_needed = st.session_state['quiz_level'] * 100
             cur_xp = st.session_state['quiz_xp']
-            progress = min(1.0, cur_xp / xp_needed) if xp_needed > 0 else 0
             st.write(f"**XP: {cur_xp} / {xp_needed}**")
-            st.progress(progress)
+            st.progress(min(1.0, cur_xp / xp_needed) if xp_needed > 0 else 0)
         with c_life:
             st.markdown(f"### {'❤️' * st.session_state['quiz_lives']}")
             if st.session_state['quiz_lives'] == 0:
                 st.error("GAME OVER!")
                 if st.button("🔄 Restart"):
-                    st.session_state.update({'quiz_lives': 3, 'quiz_score': 0, 'quiz_xp': 0, 'quiz_level': 1})
+                    st.session_state.update(
+                        {'quiz_lives': 3, 'quiz_score': 0, 'quiz_xp': 0, 'quiz_level': 1, 'recent_quiz_chars': [],
+                         'recent_quiz_words': []})
                     st.rerun()
                 st.stop()
 
         st.divider()
-        quiz_mode = st.radio("Mode:", ["🅰️ Multiple Choice", "📹 Mimic Master"], horizontal=True)
 
-        # Question Gen
+        # New Feature: Select between Alphabet and Vocabulary Words
+        c_qtype, c_ansmode = st.columns(2)
+        with c_qtype:
+            quiz_type = st.radio("Vocabulary Type:", ["🔤 Letters", "💬 Words (SignASL)"], horizontal=True)
+        with c_ansmode:
+            quiz_mode = st.radio("Answer Mode:", ["🅰️ Multiple Choice", "📹 Mimic Master"], horizontal=True)
+
+        # Reset Question if Vocabulary Type Changes
+        if quiz_type != st.session_state['last_quiz_type']:
+            st.session_state['last_quiz_type'] = quiz_type
+            st.session_state['quiz_current'] = None
+
+            # Question Gen with Memory Buffer
         if st.session_state['quiz_current'] is None:
-            max_idx = min(25, st.session_state['quiz_level'] * 5)
-            target = random.choice("abcdefghijklmnopqrstuvwxyz"[:max_idx])
+            if "Letters" in quiz_type:
+                target = get_new_quiz_char(st.session_state['quiz_level'])
+                pool = list(string.ascii_uppercase[:min(26, st.session_state['quiz_level'] * 5)])
+            else:
+                target = get_new_quiz_word()
+                pool = COMMON_WORDS
+
             st.session_state['quiz_current'] = target
             opts = [target]
             while len(opts) < 4:
-                c = random.choice("abcdefghijklmnopqrstuvwxyz"[:max_idx])
+                c = random.choice(pool)
                 if c not in opts: opts.append(c)
             random.shuffle(opts)
             st.session_state['quiz_options'] = opts
@@ -446,23 +442,31 @@ with tab5:
         col_q, col_a = st.columns([1, 1])
 
         with col_q:
-            st.info(f"Question: What is this?")
-            # --- NEW ASSET LOGIC: Check Video vs Image ---
-            path = video_engine.get_sign_asset(target)
+            st.info("Question: What is this sign?")
+
+            # Asset Loading Logic
+            path = None
+            if "Letters" in quiz_type:
+                path = video_engine.get_sign_asset(target)
+            else:
+                # Scrape missing word videos dynamically from SignASL
+                with st.spinner(f"Fetching '{target}' from SignASL..."):
+                    path = video_engine.fetch_online_sign(target)
 
             if path and os.path.exists(path):
                 if path.endswith(".mp4"):
-                    st.video(path, format="video/mp4", autoplay=True, muted=True, loop=True)
+                    st.video(path, autoplay=True, muted=True, loop=True)
                 else:
                     st.image(path, width=300)
             else:
-                st.warning(f"Missing asset for '{target.upper()}'")
+                st.warning(f"Missing asset or unable to fetch '{target.upper()}' online.")
 
         with col_a:
             if "Multiple" in quiz_mode:
                 def check_mcq(sel):
                     if sel == target:
-                        st.session_state['quiz_xp'] += 10
+                        st.session_state['quiz_xp'] += 15 if "Words" in quiz_type else 10
+                        st.session_state['quiz_score'] += 10
                         st.session_state['quiz_streak'] += 1
                         st.toast("✅ Correct!", icon="🔥")
                         if st.session_state['quiz_xp'] >= st.session_state['quiz_level'] * 100:
@@ -470,7 +474,8 @@ with tab5:
                             st.balloons()
                     else:
                         st.session_state['quiz_lives'] -= 1
-                        st.toast("❌ Wrong!", icon="💔")
+                        st.session_state['quiz_streak'] = 0
+                        st.toast(f"❌ Wrong! It was {target}", icon="💔")
                     st.session_state['quiz_current'] = None
                     time.sleep(0.5)
 
@@ -486,6 +491,10 @@ with tab5:
 
             else:
                 st.markdown(f"### Show: **{target.upper()}**")
+
+                if "Words" in quiz_type:
+                    st.info("💡 Make sure your ML Model supports Word Level detection to play Mimic Master with words!")
+
                 run_mimic = st.toggle("Start Cam")
                 cam_ph = st.empty()
                 if run_mimic:
@@ -494,18 +503,22 @@ with tab5:
                     while cap.isOpened() and run_mimic:
                         ret, frame = cap.read()
                         if not ret: break
-                        frame, det, _ = translator_engine.process_frame(frame, "Letter", draw_trace=False)
+
+                        engine_detect_mode = "Word" if "Words" in quiz_type else "Letter"
+                        frame, det, _ = translator_engine.process_frame(frame, engine_detect_mode, draw_trace=False)
                         cam_ph.image(frame, channels="BGR")
-                        if det and det.lower() == target.lower():
+
+                        if det and det.upper() == target.upper():
                             cnt += 1
                             if cnt > 10:
-                                st.session_state['quiz_xp'] += 20
+                                st.session_state['quiz_xp'] += 25 if "Words" in quiz_type else 20
+                                st.session_state['quiz_score'] += 20
                                 st.balloons()
                                 if st.session_state['quiz_xp'] >= st.session_state['quiz_level'] * 100:
                                     st.session_state['quiz_level'] += 1
                                 st.session_state['quiz_current'] = None
-                                cap.release();
-                                time.sleep(1);
+                                cap.release()
+                                time.sleep(1)
                                 st.rerun()
                         else:
                             cnt = 0
@@ -513,7 +526,7 @@ with tab5:
                     cap.release()
 
         st.divider()
-        if st.button("⏭️ Skip (-5 XP)"):
+        if st.button("⏭️ Skip Question (-5 XP)"):
             st.session_state['quiz_xp'] = max(0, st.session_state['quiz_xp'] - 5)
             st.session_state['quiz_current'] = None
             st.rerun()
@@ -546,3 +559,6 @@ with tab6:
             if st.form_submit_button("Submit"):
                 save_feedback(st.session_state['user_name'], r, cat, sus, cm)
                 st.success("Feedback Saved!")
+
+
+
