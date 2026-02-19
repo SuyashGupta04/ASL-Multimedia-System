@@ -143,7 +143,7 @@ class VideoEngine:
         return out_wav
 
     # --- MAIN GENERATOR ---
-    def generate_sequence(self, text, output_path, force_spelling=False, speed=1.0):
+    def generate_sequence(self, text, output_path, force_spelling=False, speed=1.0, show_text=True):
         words = text.split()
         ts = int(time.time())
 
@@ -213,12 +213,14 @@ class VideoEngine:
                         audio_segments.append(wav)
                         files_to_cleanup.append(wav)
 
-        # 2. ADD OCR TEXT SLIDE
-        self._write_text_slide(out, text, duration_sec=2.0)
+        # 2. ADD OCR TEXT SLIDE (Only if show_text is True)
+        if show_text:
+            self._write_text_slide(out, text, duration_sec=2.0)
+
         out.release()
 
         # Audio is silent during the OCR text slide
-        if gTTS:
+        if gTTS and show_text:
             wav = self._make_silence(2.0, ts, "end_slide")
             if wav:
                 audio_segments.append(wav)
